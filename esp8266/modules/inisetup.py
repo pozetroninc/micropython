@@ -1,12 +1,7 @@
 import uos
 import network
 from flashbdev import bdev
-
-def wifi():
-    import ubinascii
-    ap_if = network.WLAN(network.AP_IF)
-    essid = b"MicroPython-%s" % ubinascii.hexlify(ap_if.config("mac")[-3:])
-    ap_if.config(essid=essid, authmode=network.AUTH_WPA_WPA2_PSK, password=b"micropythoN")
+import gc
 
 def check_bootsec():
     buf = bytearray(bdev.SEC_SIZE)
@@ -35,18 +30,63 @@ programming).
 def setup():
     check_bootsec()
     print("Performing initial setup")
-    wifi()
     uos.VfsFat.mkfs(bdev)
     vfs = uos.VfsFat(bdev)
     uos.mount(vfs, '/')
-    with open("boot.py", "w") as f:
+    with open("/boot.py", "w") as f:
         f.write("""\
-# This file is executed on every boot (including wake-boot from deepsleep)
-#import esp
-#esp.osdebug(None)
 import gc
-#import webrepl
-#webrepl.start()
+# This is required to disable the default MicroPython AP aka "ESP-XXXXXX"
+import network
+ap = network.WLAN(network.AP_IF)
+ap.active(False)
+del(network)
 gc.collect()
 """)
+
+    # The following writes the pozetron config to a file so it can later be overwritten if necessary.
+    try:
+        config_string = """\
+SCRIPTS_DIR = '/scripts/'
+API_BASE = 'http://api.pozetron.com/device/v1'
+CACHE_FILE_NAME = '/scripts/.scripts_cache'
+"""
+        with open('/pozetron_config.py', 'w') as config_file:
+            config_file.write(config_string)
+    except:
+        print('Error setting up the pozetron config')
+
+    try:
+        from resources import resources
+        for resource in resources:
+            with open('.'.join(resource.rsplit('_', 1)), 'wb') as resource_file:
+                resource_file.write(bytes(x for x in resources[resource]))
+    except OSError:
+        print('Nothing in resources')
+    finally:
+        resource = None
+        del(resources)
+    try:
+        from user import resources
+        from pozetron_config import SCRIPTS_DIR
+        try:
+            uos.listdir(SCRIPTS_DIR.split('/')[1])
+        except OSError:
+            uos.mkdir(SCRIPTS_DIR.split('/')[1])
+        for resource in resources:
+            with open(SCRIPTS_DIR+'.'.join(resource.rsplit('_', 1)), 'wb') as resource_file:
+                resource_file.write(bytes(x for x in resources[resource]))
+        resources.clear()
+    except OSError:
+        print('Nothing in user')
+    finally:
+        resources = None
+        SCRIPTS_DIR = None
+        del(resources)
+        del(SCRIPTS_DIR)
+    gc.collect()
+    with open("/main.py", "w") as f:
+        f.write('import gc')
+        f.write('\n')
+        f.write("import init")
     return vfs
