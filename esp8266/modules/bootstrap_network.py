@@ -19,7 +19,7 @@ def connect_with_saved_credentials(min_timeout= 15000, max_timeout= 30000, max_r
         network_psk = network_config.network_psk
         print("We've been provided network credentials, connecting for the first time.")
         del(network_config)
-    except ImportError:
+    except (ImportError, AttributeError):
         # Credentials are only used first time to bootstrap, then they are deleted.
         print('Starting up with network config from flash.')
 

@@ -48,18 +48,20 @@ def epilog():
         # We're trying to be cooperative here.
         utime.sleep_ms(0)
         now = utime.ticks_ms()
-        if utime.ticks_diff(now, pozetron.last_refreshed_scripts) > one_minute:
-            try:
-                refresh_scripts()
-                pozetron.last_refreshed_scripts = now
-                flush_logs()
-            except RequestError:
-                pass
 
+        # Check commands before refreshing scripts so reboot remains a viable failsafe
         if utime.ticks_diff(now, pozetron.last_checked_commands) > one_minute:
             try:
                 check_commands()
                 pozetron.last_checked_commands = now
+                flush_logs()
+            except RequestError:
+                pass
+
+        if utime.ticks_diff(now, pozetron.last_refreshed_scripts) > one_minute:
+            try:
+                refresh_scripts()
+                pozetron.last_refreshed_scripts = now
                 flush_logs()
             except RequestError:
                 pass
@@ -200,7 +202,6 @@ def post_checkin():
 def on_startup():
     # This function MUST be called once on device startup.
     post_checkin()
-    #log('on_startup completed')
 
 
 def _reboot():
