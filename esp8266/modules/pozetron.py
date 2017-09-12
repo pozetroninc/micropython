@@ -2,7 +2,7 @@ import gc
 import os
 import sys
 
-from uhttp_signature.authed_urequests import make_validated_request, RequestError
+from uhttp_signature.authed_urequests import make_validated_request, RequestError, SignatureException
 
 from pozetron_config import *
 from credentials import KEY_ID, HMAC_SECRET
@@ -34,7 +34,6 @@ one_second = const(1000)
 one_minute = const(60000)
 five_minutes = const(300000)
 
-
 # Fake main loop in case user supplied main isn't available
 
 class  fake_main(object):
@@ -49,22 +48,42 @@ def epilog():
         utime.sleep_ms(0)
         now = utime.ticks_ms()
 
-        # Check commands before refreshing scripts so reboot remains a viable failsafe
-        if utime.ticks_diff(now, pozetron.last_checked_commands) > one_minute:
+        # In the case of an signature error (client or server) try update the system time in
+        # case the clock has skewed significantly
+        for attempt in range(3):
             try:
-                check_commands()
-                pozetron.last_checked_commands = now
-                flush_logs()
-            except RequestError:
-                pass
+                # Check commands before refreshing scripts so reboot remains a viable failsafe
+                if utime.ticks_diff(now, pozetron.last_checked_commands) > one_minute:
+                    try:
+                        check_commands()
+                        pozetron.last_checked_commands = now
+                        flush_logs()
+                    except SignatureException as e:
+                        raise e
+                    except RequestError:
+                        pass
 
-        if utime.ticks_diff(now, pozetron.last_refreshed_scripts) > one_minute:
-            try:
-                refresh_scripts()
-                pozetron.last_refreshed_scripts = now
-                flush_logs()
-            except RequestError:
-                pass
+                if utime.ticks_diff(now, pozetron.last_refreshed_scripts) > one_minute:
+                    try:
+                        refresh_scripts()
+                        pozetron.last_refreshed_scripts = now
+                        flush_logs()
+                    except SignatureException as e:
+                        raise e
+                    except RequestError:
+                        pass
+            except SignatureException:
+                # Try to set the time through NTP, but not too hard
+                try:
+                    import ntptime
+                    ntptime.settime()
+                except:
+                    pass
+                finally:
+                    ntptime = None
+                    del(ntptime)
+            else:
+                break
     finally:
         del(utime)
 
@@ -119,7 +138,7 @@ def flush_logs():
             try:
                 import ujson
                 import uos
-                if ujson.loads(ex.args[2])['detail'].startswith('JSON parse error'):
+                if len(ex.args) > 3 and ujson.loads(ex.args[2])['detail'].startswith('JSON parse error'):
                     with open(logger._LOG_FILE, 'rb') as logfile:
                         for byte in logfile:
                             if byte == '\00' or '\FF':
@@ -153,13 +172,19 @@ def flush_logs():
         logger._send_fails += 1
     # If too many fails, reset log
     if logger._send_fails >= 3:
-        logger._overflow_errors = 0
-        logger._send_fails = 0
-        logger._logs.clear()
-        if logger.file_size:
-            with open(logger._LOG_FILE, 'w'):
-                pass
+        clear_logs()
         log('Failure sending logs, truncated logs have been lost')
+    del logger
+
+
+def clear_logs():
+    import logger
+    logger._overflow_errors = 0
+    logger._send_fails = 0
+    logger._logs.clear()
+    if logger.file_size:
+        with open(logger._LOG_FILE, 'w'):
+            pass
     del logger
 
 
@@ -230,8 +255,29 @@ def check_commands(debug=pozetron.debug):
             commands.sort(key=lambda x: COMMAND_ORDER.get(x['type'], 0))
         for command in commands:
             if command['type'] == 'log_mode':
+                # Log enable/disable
                 old_send_logs = logger._send_logs
                 logger._send_logs = command['data']['enable']
+                # If being disabled, flush remaining lines
+                if old_send_logs and not logger._send_logs:
+                    flush_logs()
+                # Change log mode
+                new_size = None
+                if command['data'].get('mode') == 'memory':
+                    new_size = 0
+                elif command['data'].get('mode') == 'file' and 'file_size' in command['data']:
+                    new_size = command['data']['file_size']
+                if new_size is not None and new_size != logger.file_size:
+                    # Flush unconditionally, to keep it simple.
+                    flush_logs()
+                    # Flush failed? Force clear.
+                    # (this is not relevant if mode is still "file")
+                    if logger._send_fails and (logger.file_size == 0 or new_size == 0):  # memory <-> file
+                        clear_logs()
+                        logger.file_size = new_size  # so that following line goes to new destination
+                        log('Failure sending logs, truncated logs have been lost')
+                logger.file_size = new_size
+                del new_size
                 if logger._send_logs != old_send_logs:
                     log('Log mode enabled' if logger._send_logs else 'Log mode disabled')
             elif command['type'] == 'reboot':
