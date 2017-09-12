@@ -10,7 +10,7 @@ except:
 # (date(2000, 1, 1) - date(1900, 1, 1)).days * 24*60*60
 NTP_DELTA = 3155673600
 
-host = "pool.ntp.org"
+host = "time.google.com"
 
 def time():
     NTP_QUERY = bytearray(48)
