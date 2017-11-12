@@ -98,10 +98,12 @@ class HMAC:
             key = self.digest_cons(key).digest()
 
         key = key + bytes(blocksize - len(key))
-        # Using bytes(iterable_of_int) is the most memory-efficient way,
-        # because micropython doesn't have bytes.translate() function.
-        self.outer.update(bytes(trans_5C[x] for x in key))
-        self.inner.update(bytes(trans_36[x] for x in key))
+        # Using bytes with a generator expression with a throwaway list 
+        # instead of char below to avoid ending up with the wrong key 
+        # when a key in the form of b'\xAA' is used.  
+        # Removed translate function call to save a stack entry (RAM usage)
+        self.outer.update(b''.join((bytes([trans_5C[x]]) for x in key)))
+        self.inner.update(b''.join((bytes([trans_36[x]]) for x in key)))
         if msg is not None:
             self.update(msg)
 
@@ -229,3 +231,17 @@ def compare_digest(a, b, double_hmac=True, digestmod=b'sha256'):
     for index, byte_value in enumerate(a):
         result |= byte_value ^ b[index]
     return result == 0
+
+def test():
+    """Test suite for the HMAC module"""
+    run_tests = False
+    try:
+        from test_hmac import test_sha_vectors, test_sha256_rfc4231, test_compare_digest
+        run_tests = True
+    except ImportError:
+        raise AssertionError('test_hmac not found, skipping all tests.')
+
+    if run_tests:
+        test_sha_vectors()
+        test_sha256_rfc4231()
+        test_compare_digest()

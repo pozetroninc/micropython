@@ -5,20 +5,17 @@ from uhttp_signature import sign
 
 # Micropython implementations of time() use different epoch starts:
 # 1970-01-01 on Unix
-# 2000-01-01 on devices
-# We use 2000-01-01 00:00:00 UTC for Timestamp header.
+# 2001-01-01 on devices
+# We use 2001-01-01 00:00:00 UTC for Timestamp header.
 try:
     import sys
     if sys.platform == 'linux': # currently the unix port returns 'linux'
-        EPOCH = 946684800
+        EPOCH = 978307200
     else:
         EPOCH = 0
 finally:
     sys = None
     del(sys)
-
-# Max seconds between response Timestamp header and device's current time
-MAX_TIMESTAMP_DELTA = 50
 
 
 class RequestError(Exception):
@@ -80,7 +77,7 @@ def make_request(url, key_id, secret, method, debug, headers, **kwargs):
 def make_validated_request(url, key_id, secret, method='GET', debug=False, headers=None, check_status=True, **kwargs):
     #"""
     #Call make_request() and validate result.
-    #1. Check signature and timestamp
+    #1. Check signature
     #2. Check HTTP status code
     #"""
     response = make_request(url, key_id, secret, method=method, debug=debug, headers=headers, **kwargs)
@@ -88,17 +85,11 @@ def make_validated_request(url, key_id, secret, method='GET', debug=False, heade
         if response.content == b'{"detail":"Invalid signature."}':
             raise SignatureException('Request is rejected: Invalid signature')
         raise SignatureException('Response is not signed')
-    h = hmac.new(secret, b'timestamp: ')
-    h.update(str(response.timestamp))
-    h.update(response.text)
     if not hmac.compare_digest(response.content_hmac.encode('ascii'),
-                               h.hexdigest()):
+                               hmac.new(secret, msg=b'timestamp: ' + str(response.timestamp) + response.text).hexdigest()):
         if response.timestamp is None:
             raise SignatureException('Invalid response (no Timestamp)')
         raise SignatureException('Invalid response signature')
-    if abs(time.time() - EPOCH - response.timestamp) > MAX_TIMESTAMP_DELTA:
-        raise SignatureException('Invalid response (Timestamp is different {!r} vs {!r})'
-                                 .format(response.timestamp, time.time() - EPOCH))
     if check_status and not (200 <= response.status_code < 300):
         raise HTTPStatusError(method, url, response)
     return response
