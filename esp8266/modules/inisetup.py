@@ -61,23 +61,26 @@ CACHE_FILE_NAME = '/scripts/.scripts_cache'
         for resource in resources:
             with open('.'.join(resource.rsplit('_', 1)), 'wb') as resource_file:
                 resource_file.write(bytes(x for x in resources[resource]))
-    except OSError:
+    except (OSError, ImportError):
         print('Nothing in resources')
     finally:
         resource = None
         del(resources)
     try:
-        from user import resources
         from pozetron_config import SCRIPTS_DIR
         try:
             uos.listdir(SCRIPTS_DIR.split('/')[1])
         except OSError:
             uos.mkdir(SCRIPTS_DIR.split('/')[1])
+    except OSError:
+        print('Error creating SCRIPTS_DIR')
+    try:
+        from user import resources
         for resource in resources:
             with open(SCRIPTS_DIR+'.'.join(resource.rsplit('_', 1)), 'wb') as resource_file:
                 resource_file.write(bytes(x for x in resources[resource]))
         resources.clear()
-    except OSError:
+    except (OSError, ImportError):
         print('Nothing in user')
     finally:
         resources = None
