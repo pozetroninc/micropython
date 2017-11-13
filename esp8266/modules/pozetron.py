@@ -254,6 +254,8 @@ def check_commands(debug=pozetron.debug):
         if len(commands) > 1:
             commands.sort(key=lambda x: COMMAND_ORDER.get(x['type'], 0))
         for command in commands:
+            # set error=<str> and it will be reported to server
+            error = ''
             if command['type'] == 'log_mode':
                 # Log enable/disable
                 old_send_logs = logger._send_logs
@@ -289,6 +291,7 @@ def check_commands(debug=pozetron.debug):
                     _reboot()
                 finally:
                     del(utime)
+                continue  # reboot is special, we send confirmation AFTER reboot
             elif command['type'] == 'forget_network' and forget_network_time is None:
                 import utime, machine
                 try:
@@ -297,6 +300,17 @@ def check_commands(debug=pozetron.debug):
                     log('Removed network config')
                 except OSError:  # no file = do nothing
                     print('forget-network is a no-op')
+            else:
+                error = 'Unknown command'
+            # Confirm command execution
+            make_validated_request(API_BASE + '/command/', key_id=KEY_ID, secret=HMAC_SECRET,
+                                   method='POST',
+                                   json={
+                                       'command': command,
+                                       'success': error == '',
+                                       'error': error
+                                   },
+                                   debug=pozetron.debug)
     finally:
         del logger
 
