@@ -16,15 +16,15 @@ UART objects can be created and initialised using::
     uart = UART(1, 9600)                         # init with given baudrate
     uart.init(9600, bits=8, parity=None, stop=1) # init with given parameters
 
-Supported paramters differ on a board:
+Supported parameters differ on a board:
 
-Pyboard: Bits can be 7, 8 or 9. Stop can be 1 or 2. With `parity=None`,
+Pyboard: Bits can be 7, 8 or 9. Stop can be 1 or 2. With *parity=None*,
 only 8 and 9 bits are supported.  With parity enabled, only 7 and 8 bits
 are supported.
 
 WiPy/CC3200: Bits can be 5, 6, 7, 8. Stop can be 1 or 2.
 
-A UART object acts like a stream object and reading and writing is done
+A UART object acts like a `stream` object and reading and writing is done
 using the standard stream methods::
 
     uart.read(10)       # read 10 characters, returns a bytes object
@@ -65,8 +65,16 @@ Methods
 
 .. method:: UART.any()
 
-   Return true value if there're characters available for reading. On some
-   boards, the number of available characters is returned.
+   Returns an integer counting the number of characters that can be read without
+   blocking.  It will return 0 if there are no characters available and a positive
+   number if there are characters.  The method may return 1 even if there is more
+   than one character available for reading.
+
+   For more sophisticated querying of available characters use select.poll::
+
+    poll = select.poll()
+    poll.register(uart, select.POLLIN)
+    poll.poll(timeout)
 
 .. method:: UART.read([nbytes])
 

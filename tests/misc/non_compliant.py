@@ -4,9 +4,8 @@ try:
     import array
     import ustruct
 except ImportError:
-    import sys
     print("SKIP")
-    sys.exit()
+    raise SystemExit
 
 # when super can't find self
 try:
@@ -39,18 +38,6 @@ try:
     print(1 in array.array('B', b'12'))
 except NotImplementedError:
     print('NotImplementedError')
-
-# should raise type error
-try:
-    print(set('12') >= '1')
-except TypeError:
-    print('TypeError')
-
-# should raise type error
-try:
-    print(set('12') <= '123')
-except TypeError:
-    print('TypeError')
 
 # uPy raises TypeError, shold be ValueError
 try:
@@ -137,3 +124,18 @@ try:
     f.x = 1
 except AttributeError:
     print('AttributeError')
+
+# can't call a function type (ie make new instances of a function)
+try:
+    type(f)()
+except TypeError:
+    print('TypeError')
+
+# test when object explicitly listed at not-last position in parent tuple
+# this is not compliant with CPython because of illegal MRO
+class A:
+    def foo(self):
+        print('A.foo')
+class B(object, A):
+    pass
+B().foo()

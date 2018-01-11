@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -29,13 +29,11 @@
 #include <string.h>
 #include <assert.h>
 
-#include "py/nlr.h"
-#include "py/objfun.h"
-#include "py/runtime0.h"
+#include "py/runtime.h"
 #include "py/bc0.h"
 #include "py/bc.h"
 
-#if 0 // print debugging info
+#if MICROPY_DEBUG_VERBOSE // print debugging info
 #define DEBUG_PRINT (1)
 #else // don't print debugging info
 #define DEBUG_PRINT (0)
@@ -62,6 +60,14 @@ mp_uint_t mp_decode_uint(const byte **ptr) {
 // and reused later in the function.
 mp_uint_t mp_decode_uint_value(const byte *ptr) {
     return mp_decode_uint(&ptr);
+}
+
+// This function is used to help reduce stack usage at the caller, for the case when
+// the caller doesn't need the actual value and just wants to skip over it.
+const byte *mp_decode_uint_skip(const byte *ptr) {
+    while ((*ptr++) & 0x80) {
+    }
+    return ptr;
 }
 
 STATIC NORETURN void fun_pos_args_mismatch(mp_obj_fun_bc_t *f, size_t expected, size_t given) {
@@ -115,7 +121,7 @@ void mp_setup_code_state(mp_code_state_t *code_state, size_t n_args, size_t n_kw
 
     // get params
     size_t n_state = mp_decode_uint(&code_state->ip);
-    mp_decode_uint(&code_state->ip); // skip n_exc_stack
+    code_state->ip = mp_decode_uint_skip(code_state->ip); // skip n_exc_stack
     size_t scope_flags = *code_state->ip++;
     size_t n_pos_args = *code_state->ip++;
     size_t n_kwonly_args = *code_state->ip++;
@@ -315,7 +321,7 @@ STATIC const byte opcode_format_table[64] = {
     OC4(O, O, U, U), // 0x38-0x3b
     OC4(U, O, B, O), // 0x3c-0x3f
     OC4(O, B, B, O), // 0x40-0x43
-    OC4(B, B, O, U), // 0x44-0x47
+    OC4(B, B, O, B), // 0x44-0x47
     OC4(U, U, U, U), // 0x48-0x4b
     OC4(U, U, U, U), // 0x4c-0x4f
     OC4(V, V, U, V), // 0x50-0x53
@@ -355,7 +361,7 @@ STATIC const byte opcode_format_table[64] = {
     OC4(B, B, B, B), // 0xcc-0xcf
 
     OC4(B, B, B, B), // 0xd0-0xd3
-    OC4(B, B, B, B), // 0xd4-0xd7
+    OC4(U, U, U, B), // 0xd4-0xd7
     OC4(B, B, B, B), // 0xd8-0xdb
     OC4(B, B, B, B), // 0xdc-0xdf
 
@@ -366,7 +372,7 @@ STATIC const byte opcode_format_table[64] = {
 
     OC4(B, B, B, B), // 0xf0-0xf3
     OC4(B, B, B, B), // 0xf4-0xf7
-    OC4(B, B, B, U), // 0xf8-0xfb
+    OC4(U, U, U, U), // 0xf8-0xfb
     OC4(U, U, U, U), // 0xfc-0xff
 };
 #undef OC4

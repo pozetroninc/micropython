@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -28,12 +28,10 @@
 #include <assert.h>
 #include <string.h>
 
-#include "py/nlr.h"
 #include "py/parsenum.h"
 #include "py/smallint.h"
 #include "py/objint.h"
 #include "py/objstr.h"
-#include "py/runtime0.h"
 #include "py/runtime.h"
 #include "py/binary.h"
 
@@ -106,7 +104,7 @@ STATIC mp_fp_as_int_class_t mp_classify_fp_as_int(mp_float_t val) {
 #define MP_FLOAT_SIGN_SHIFT_I32 ((MP_FLOAT_FRAC_BITS + MP_FLOAT_EXP_BITS) % 32)
 #define MP_FLOAT_EXP_SHIFT_I32 (MP_FLOAT_FRAC_BITS % 32)
 
-    if (e & (1 << MP_FLOAT_SIGN_SHIFT_I32)) {
+    if (e & (1U << MP_FLOAT_SIGN_SHIFT_I32)) {
 #if MICROPY_FLOAT_IMPL == MICROPY_FLOAT_IMPL_DOUBLE
         e |= u.i[MP_ENDIANNESS_BIG] != 0;
 #endif
@@ -314,23 +312,13 @@ int mp_obj_int_sign(mp_obj_t self_in) {
     }
 }
 
-// This must handle int and bool types, and must raise a
-// TypeError if the argument is not integral
-mp_obj_t mp_obj_int_abs(mp_obj_t self_in) {
-    mp_int_t val = mp_obj_get_int(self_in);
-    if (val < 0) {
-        val = -val;
-    }
-    return MP_OBJ_NEW_SMALL_INT(val);
-}
-
 // This is called for operations on SMALL_INT that are not handled by mp_unary_op
-mp_obj_t mp_obj_int_unary_op(mp_uint_t op, mp_obj_t o_in) {
+mp_obj_t mp_obj_int_unary_op(mp_unary_op_t op, mp_obj_t o_in) {
     return MP_OBJ_NULL; // op not supported
 }
 
 // This is called for operations on SMALL_INT that are not handled by mp_binary_op
-mp_obj_t mp_obj_int_binary_op(mp_uint_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
+mp_obj_t mp_obj_int_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
     return mp_obj_int_binary_op_extra_cases(op, lhs_in, rhs_in);
 }
 
@@ -382,7 +370,7 @@ mp_int_t mp_obj_int_get_checked(mp_const_obj_t self_in) {
 
 // This dispatcher function is expected to be independent of the implementation of long int
 // It handles the extra cases for integer-like arithmetic
-mp_obj_t mp_obj_int_binary_op_extra_cases(mp_uint_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
+mp_obj_t mp_obj_int_binary_op_extra_cases(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
     if (rhs_in == mp_const_false) {
         // false acts as 0
         return mp_binary_op(op, lhs_in, MP_OBJ_NEW_SMALL_INT(0));
@@ -432,15 +420,14 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(int_from_bytes_fun_obj, 3, 4, int_fro
 STATIC MP_DEFINE_CONST_CLASSMETHOD_OBJ(int_from_bytes_obj, MP_ROM_PTR(&int_from_bytes_fun_obj));
 
 STATIC mp_obj_t int_to_bytes(size_t n_args, const mp_obj_t *args) {
-    // TODO: Support byteorder param
     // TODO: Support signed param (assumes signed=False)
     (void)n_args;
 
-    if (args[2] != MP_OBJ_NEW_QSTR(MP_QSTR_little)) {
-        mp_not_implemented("");
+    mp_int_t len = mp_obj_get_int(args[1]);
+    if (len < 0) {
+        mp_raise_ValueError(NULL);
     }
-
-    mp_uint_t len = MP_OBJ_SMALL_INT_VALUE(args[1]);
+    bool big_endian = args[2] != MP_OBJ_NEW_QSTR(MP_QSTR_little);
 
     vstr_t vstr;
     vstr_init_len(&vstr, len);
@@ -449,12 +436,13 @@ STATIC mp_obj_t int_to_bytes(size_t n_args, const mp_obj_t *args) {
 
     #if MICROPY_LONGINT_IMPL != MICROPY_LONGINT_IMPL_NONE
     if (!MP_OBJ_IS_SMALL_INT(args[0])) {
-        mp_obj_int_to_bytes_impl(args[0], false, len, data);
+        mp_obj_int_to_bytes_impl(args[0], big_endian, len, data);
     } else
     #endif
     {
         mp_int_t val = MP_OBJ_SMALL_INT_VALUE(args[0]);
-        mp_binary_set_int(MIN((size_t)len, sizeof(val)), false, data, val);
+        size_t l = MIN((size_t)len, sizeof(val));
+        mp_binary_set_int(l, big_endian, data + (big_endian ? (len - l) : 0), val);
     }
 
     return mp_obj_new_str_from_vstr(&mp_type_bytes, &vstr);

@@ -107,9 +107,9 @@ Use the :ref:`machine.Pin <machine.Pin>` class::
     from machine import Pin
 
     p0 = Pin(0, Pin.OUT)    # create output pin on GPIO0
-    p0.high()               # set pin to high
-    p0.low()                # set pin to low
-    p0.value(1)             # set pin to high
+    p0.on()                 # set pin to "on" (high) level
+    p0.off()                # set pin to "off" (low) level
+    p0.value(1)             # set pin to on/high
 
     p2 = Pin(2, Pin.IN)     # create input pin on GPIO2
     print(p2.value())       # get value, 0 or 1
@@ -222,6 +222,17 @@ and is accessed via the :ref:`machine.I2C <machine.I2C>` class::
 
     buf = bytearray(10)     # create a buffer with 10 bytes
     i2c.writeto(0x3a, buf)  # write the given buffer to the slave
+
+Real time clock (RTC)
+---------------------
+
+See :ref:`machine.RTC <machine.RTC>` ::
+
+    from machine import RTC
+
+    rtc = RTC()
+    rtc.datetime((2017, 8, 23, 1, 12, 48, 0, 0)) # set a specific date and time
+    rtc.datetime() # get date and time
 
 Deep-sleep mode
 ---------------

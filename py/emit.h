@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -23,13 +23,11 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-
-#ifndef __MICROPY_INCLUDED_PY_EMIT_H__
-#define __MICROPY_INCLUDED_PY_EMIT_H__
+#ifndef MICROPY_INCLUDED_PY_EMIT_H
+#define MICROPY_INCLUDED_PY_EMIT_H
 
 #include "py/lexer.h"
 #include "py/scope.h"
-#include "py/runtime0.h"
 
 /* Notes on passes:
  * We don't know exactly the opcodes in pass 1 because they depend on the
@@ -284,4 +282,4 @@ void mp_emitter_warning(pass_kind_t pass, const char *msg);
 #define mp_emitter_warning(pass, msg)
 #endif
 
-#endif // __MICROPY_INCLUDED_PY_EMIT_H__
+#endif // MICROPY_INCLUDED_PY_EMIT_H
