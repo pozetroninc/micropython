@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -28,8 +28,6 @@
 #include <string.h>
 #include <assert.h>
 
-#include "py/mpstate.h"
-#include "py/nlr.h"
 #include "py/parsenum.h"
 #include "py/compile.h"
 #include "py/objstr.h"
@@ -38,13 +36,12 @@
 #include "py/objmodule.h"
 #include "py/objgenerator.h"
 #include "py/smallint.h"
-#include "py/runtime0.h"
 #include "py/runtime.h"
 #include "py/builtin.h"
 #include "py/stackctrl.h"
 #include "py/gc.h"
 
-#if 0 // print debugging info
+#if MICROPY_DEBUG_VERBOSE // print debugging info
 #define DEBUG_PRINT (1)
 #define DEBUG_printf DEBUG_printf
 #define DEBUG_OP_printf(...) DEBUG_printf(__VA_ARGS__)
@@ -105,6 +102,13 @@ void mp_init(void) {
     MP_STATE_VM(mp_module_builtins_override_dict) = NULL;
     #endif
 
+    #if MICROPY_PY_OS_DUPTERM
+    for (size_t i = 0; i < MICROPY_PY_OS_DUPTERM; ++i) {
+        MP_STATE_VM(dupterm_objs[i]) = MP_OBJ_NULL;
+    }
+    MP_STATE_VM(dupterm_arr_obj) = MP_OBJ_NULL;
+    #endif
+
     #if MICROPY_FSUSERMOUNT
     // zero out the pointers to the user-mounted devices
     memset(MP_STATE_VM(fs_user_mount), 0, sizeof(MP_STATE_VM(fs_user_mount)));
@@ -127,7 +131,7 @@ void mp_deinit(void) {
     //mp_obj_dict_free(&dict_main);
     //mp_map_deinit(&MP_STATE_VM(mp_loaded_modules_map));
 
-    // call port specific deinitialization if any 
+    // call port specific deinitialization if any
 #ifdef MICROPY_PORT_INIT_FUNC
     MICROPY_PORT_DEINIT_FUNC;
 #endif
@@ -209,8 +213,8 @@ void mp_delete_global(qstr qst) {
     mp_obj_dict_delete(MP_OBJ_FROM_PTR(mp_globals_get()), MP_OBJ_NEW_QSTR(qst));
 }
 
-mp_obj_t mp_unary_op(mp_uint_t op, mp_obj_t arg) {
-    DEBUG_OP_printf("unary " UINT_FMT " %p\n", op, arg);
+mp_obj_t mp_unary_op(mp_unary_op_t op, mp_obj_t arg) {
+    DEBUG_OP_printf("unary " UINT_FMT " %q %p\n", op, mp_unary_op_method_name[op], arg);
 
     if (op == MP_UNARY_OP_NOT) {
         // "not x" is the negative of whether "x" is true per Python semantics
@@ -227,6 +231,15 @@ mp_obj_t mp_unary_op(mp_uint_t op, mp_obj_t arg) {
             case MP_UNARY_OP_NEGATIVE:
                 // check for overflow
                 if (val == MP_SMALL_INT_MIN) {
+                    return mp_obj_new_int(-val);
+                } else {
+                    return MP_OBJ_NEW_SMALL_INT(-val);
+                }
+            case MP_UNARY_OP_ABS:
+                if (val >= 0) {
+                    return arg;
+                } else if (val == MP_SMALL_INT_MIN) {
+                    // check for overflow
                     return mp_obj_new_int(-val);
                 } else {
                     return MP_OBJ_NEW_SMALL_INT(-val);
@@ -261,8 +274,8 @@ mp_obj_t mp_unary_op(mp_uint_t op, mp_obj_t arg) {
     }
 }
 
-mp_obj_t mp_binary_op(mp_uint_t op, mp_obj_t lhs, mp_obj_t rhs) {
-    DEBUG_OP_printf("binary " UINT_FMT " %p %p\n", op, lhs, rhs);
+mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rhs) {
+    DEBUG_OP_printf("binary " UINT_FMT " %q %p %p\n", op, mp_binary_op_method_name[op], lhs, rhs);
 
     // TODO correctly distinguish inplace operators for mutable objects
     // lookup logic that CPython uses for +=:
@@ -400,7 +413,6 @@ mp_obj_t mp_binary_op(mp_uint_t op, mp_obj_t lhs, mp_obj_t rhs) {
                         // use standard precision
                         return MP_OBJ_NEW_SMALL_INT(lhs_val * rhs_val);
                     }
-                    break;
                 }
                 case MP_BINARY_OP_FLOOR_DIVIDE:
                 case MP_BINARY_OP_INPLACE_FLOOR_DIVIDE:
@@ -475,10 +487,10 @@ mp_obj_t mp_binary_op(mp_uint_t op, mp_obj_t lhs, mp_obj_t rhs) {
                     return MP_OBJ_FROM_PTR(tuple);
                 }
 
-                case MP_BINARY_OP_LESS: return mp_obj_new_bool(lhs_val < rhs_val); break;
-                case MP_BINARY_OP_MORE: return mp_obj_new_bool(lhs_val > rhs_val); break;
-                case MP_BINARY_OP_LESS_EQUAL: return mp_obj_new_bool(lhs_val <= rhs_val); break;
-                case MP_BINARY_OP_MORE_EQUAL: return mp_obj_new_bool(lhs_val >= rhs_val); break;
+                case MP_BINARY_OP_LESS: return mp_obj_new_bool(lhs_val < rhs_val);
+                case MP_BINARY_OP_MORE: return mp_obj_new_bool(lhs_val > rhs_val);
+                case MP_BINARY_OP_LESS_EQUAL: return mp_obj_new_bool(lhs_val <= rhs_val);
+                case MP_BINARY_OP_MORE_EQUAL: return mp_obj_new_bool(lhs_val >= rhs_val);
 
                 default:
                     goto unsupported_op;
@@ -510,38 +522,12 @@ mp_obj_t mp_binary_op(mp_uint_t op, mp_obj_t lhs, mp_obj_t rhs) {
         }
     }
 
-    /* deal with `in`
-     *
-     * NOTE `a in b` is `b.__contains__(a)`, hence why the generic dispatch
-     * needs to go below with swapped arguments
-     */
+    // Convert MP_BINARY_OP_IN to MP_BINARY_OP_CONTAINS with swapped args.
     if (op == MP_BINARY_OP_IN) {
-        mp_obj_type_t *type = mp_obj_get_type(rhs);
-        if (type->binary_op != NULL) {
-            mp_obj_t res = type->binary_op(op, rhs, lhs);
-            if (res != MP_OBJ_NULL) {
-                return res;
-            }
-        }
-        if (type->getiter != NULL) {
-            /* second attempt, walk the iterator */
-            mp_obj_iter_buf_t iter_buf;
-            mp_obj_t iter = mp_getiter(rhs, &iter_buf);
-            mp_obj_t next;
-            while ((next = mp_iternext(iter)) != MP_OBJ_STOP_ITERATION) {
-                if (mp_obj_equal(next, lhs)) {
-                    return mp_const_true;
-                }
-            }
-            return mp_const_false;
-        }
-
-        if (MICROPY_ERROR_REPORTING == MICROPY_ERROR_REPORTING_TERSE) {
-            mp_raise_TypeError("object not iterable");
-        } else {
-            nlr_raise(mp_obj_new_exception_msg_varg(&mp_type_TypeError,
-                "'%s' object is not iterable", mp_obj_get_type_str(rhs)));
-        }
+        op = MP_BINARY_OP_CONTAINS;
+        mp_obj_t temp = lhs;
+        lhs = rhs;
+        rhs = temp;
     }
 
     // generic binary_op supplied by type
@@ -555,7 +541,34 @@ generic_binary_op:
         }
     }
 
-    // TODO implement dispatch for reverse binary ops
+#if MICROPY_PY_REVERSE_SPECIAL_METHODS
+    if (op >= MP_BINARY_OP_OR && op <= MP_BINARY_OP_REVERSE_POWER) {
+        mp_obj_t t = rhs;
+        rhs = lhs;
+        lhs = t;
+        if (op <= MP_BINARY_OP_POWER) {
+            op += MP_BINARY_OP_REVERSE_OR - MP_BINARY_OP_OR;
+            goto generic_binary_op;
+        }
+
+        // Convert __rop__ back to __op__ for error message
+        op -= MP_BINARY_OP_REVERSE_OR - MP_BINARY_OP_OR;
+    }
+#endif
+
+    if (op == MP_BINARY_OP_CONTAINS) {
+        // If type didn't support containment then explicitly walk the iterator.
+        // mp_getiter will raise the appropriate exception if lhs is not iterable.
+        mp_obj_iter_buf_t iter_buf;
+        mp_obj_t iter = mp_getiter(lhs, &iter_buf);
+        mp_obj_t next;
+        while ((next = mp_iternext(iter)) != MP_OBJ_STOP_ITERATION) {
+            if (mp_obj_equal(next, rhs)) {
+                return mp_const_true;
+            }
+        }
+        return mp_const_false;
+    }
 
 unsupported_op:
     if (MICROPY_ERROR_REPORTING == MICROPY_ERROR_REPORTING_TERSE) {
@@ -655,7 +668,7 @@ void mp_call_prepare_args_n_kw_var(bool have_self, size_t n_args_n_kw, const mp_
 
         // allocate memory for the new array of args
         args2_alloc = 1 + n_args + 2 * (n_kw + kw_dict_len);
-        args2 = m_new(mp_obj_t, args2_alloc);
+        args2 = mp_nonlocal_alloc(args2_alloc * sizeof(mp_obj_t));
 
         // copy the self
         if (self != MP_OBJ_NULL) {
@@ -676,7 +689,7 @@ void mp_call_prepare_args_n_kw_var(bool have_self, size_t n_args_n_kw, const mp_
 
         // allocate memory for the new array of args
         args2_alloc = 1 + n_args + len + 2 * (n_kw + kw_dict_len);
-        args2 = m_new(mp_obj_t, args2_alloc);
+        args2 = mp_nonlocal_alloc(args2_alloc * sizeof(mp_obj_t));
 
         // copy the self
         if (self != MP_OBJ_NULL) {
@@ -692,7 +705,7 @@ void mp_call_prepare_args_n_kw_var(bool have_self, size_t n_args_n_kw, const mp_
 
         // allocate memory for the new array of args
         args2_alloc = 1 + n_args + 2 * (n_kw + kw_dict_len) + 3;
-        args2 = m_new(mp_obj_t, args2_alloc);
+        args2 = mp_nonlocal_alloc(args2_alloc * sizeof(mp_obj_t));
 
         // copy the self
         if (self != MP_OBJ_NULL) {
@@ -709,7 +722,7 @@ void mp_call_prepare_args_n_kw_var(bool have_self, size_t n_args_n_kw, const mp_
         mp_obj_t item;
         while ((item = mp_iternext(iterable)) != MP_OBJ_STOP_ITERATION) {
             if (args2_len >= args2_alloc) {
-                args2 = m_renew(mp_obj_t, args2, args2_alloc, args2_alloc * 2);
+                args2 = mp_nonlocal_realloc(args2, args2_alloc * sizeof(mp_obj_t), args2_alloc * 2 * sizeof(mp_obj_t));
                 args2_alloc *= 2;
             }
             args2[args2_len++] = item;
@@ -760,7 +773,7 @@ void mp_call_prepare_args_n_kw_var(bool have_self, size_t n_args_n_kw, const mp_
                 if (new_alloc < 4) {
                     new_alloc = 4;
                 }
-                args2 = m_renew(mp_obj_t, args2, args2_alloc, new_alloc);
+                args2 = mp_nonlocal_realloc(args2, args2_alloc * sizeof(mp_obj_t), new_alloc * sizeof(mp_obj_t));
                 args2_alloc = new_alloc;
             }
 
@@ -792,7 +805,7 @@ mp_obj_t mp_call_method_n_kw_var(bool have_self, size_t n_args_n_kw, const mp_ob
     mp_call_prepare_args_n_kw_var(have_self, n_args_n_kw, args, &out_args);
 
     mp_obj_t res = mp_call_function_n_kw(out_args.fun, out_args.n_args, out_args.n_kw, out_args.args);
-    m_del(mp_obj_t, out_args.args, out_args.n_alloc);
+    mp_nonlocal_free(out_args.args, out_args.n_alloc * sizeof(mp_obj_t));
 
     return res;
 }
@@ -1038,7 +1051,7 @@ void mp_load_method_maybe(mp_obj_t obj, qstr attr, mp_obj_t *dest) {
     } else if (type->locals_dict != NULL) {
         // generic method lookup
         // this is a lookup in the object (ie not class or type)
-        assert(type->locals_dict->base.type == &mp_type_dict); // Micro Python restriction, for now
+        assert(type->locals_dict->base.type == &mp_type_dict); // MicroPython restriction, for now
         mp_map_t *locals_map = &type->locals_dict->map;
         mp_map_elem_t *elem = mp_map_lookup(locals_map, MP_OBJ_NEW_QSTR(attr), MP_MAP_LOOKUP);
         if (elem != NULL) {
@@ -1334,11 +1347,12 @@ import_error:
     const char *pkg_name = mp_obj_str_get_data(dest[0], &pkg_name_len);
 
     const uint dot_name_len = pkg_name_len + 1 + qstr_len(name);
-    char *dot_name = alloca(dot_name_len);
+    char *dot_name = mp_local_alloc(dot_name_len);
     memcpy(dot_name, pkg_name, pkg_name_len);
     dot_name[pkg_name_len] = '.';
     memcpy(dot_name + pkg_name_len + 1, qstr_str(name), qstr_len(name));
     qstr dot_name_q = qstr_from_strn(dot_name, dot_name_len);
+    mp_local_free(dot_name);
 
     mp_obj_t args[5];
     args[0] = MP_OBJ_NEW_QSTR(dot_name_q);
@@ -1408,7 +1422,7 @@ mp_obj_t mp_parse_compile_execute(mp_lexer_t *lex, mp_parse_input_kind_t parse_i
 
 #endif // MICROPY_ENABLE_COMPILER
 
-NORETURN void *m_malloc_fail(size_t num_bytes) {
+NORETURN void m_malloc_fail(size_t num_bytes) {
     DEBUG_printf("memory allocation failed, allocating %u bytes\n", (uint)num_bytes);
     #if MICROPY_ENABLE_GC
     if (gc_is_locked()) {
@@ -1439,6 +1453,13 @@ NORETURN void mp_raise_OSError(int errno_) {
     nlr_raise(mp_obj_new_exception_arg1(&mp_type_OSError, MP_OBJ_NEW_SMALL_INT(errno_)));
 }
 
-NORETURN void mp_not_implemented(const char *msg) {
+NORETURN void mp_raise_NotImplementedError(const char *msg) {
     mp_raise_msg(&mp_type_NotImplementedError, msg);
 }
+
+#if MICROPY_STACK_CHECK || MICROPY_ENABLE_PYSTACK
+NORETURN void mp_raise_recursion_depth(void) {
+    nlr_raise(mp_obj_new_exception_arg1(&mp_type_RuntimeError,
+        MP_OBJ_NEW_QSTR(MP_QSTR_maximum_space_recursion_space_depth_space_exceeded)));
+}
+#endif

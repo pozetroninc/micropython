@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -29,8 +29,6 @@
 #include <string.h>
 #include <assert.h>
 
-#include "py/mpstate.h"
-#include "py/nlr.h"
 #include "py/emitglue.h"
 #include "py/objtype.h"
 #include "py/runtime.h"
@@ -162,9 +160,13 @@ mp_vm_return_kind_t mp_execute_bytecode(mp_code_state_t *code_state, volatile mp
 run_code_state: ;
 #endif
     // Pointers which are constant for particular invocation of mp_execute_bytecode()
-    size_t n_state = mp_decode_uint_value(code_state->fun_bc->bytecode);
-    mp_obj_t * /*const*/ fastn = &code_state->state[n_state - 1];
-    mp_exc_stack_t * /*const*/ exc_stack = (mp_exc_stack_t*)(code_state->state + n_state);
+    mp_obj_t * /*const*/ fastn;
+    mp_exc_stack_t * /*const*/ exc_stack;
+    {
+        size_t n_state = mp_decode_uint_value(code_state->fun_bc->bytecode);
+        fastn = &code_state->state[n_state - 1];
+        exc_stack = (mp_exc_stack_t*)(code_state->state + n_state);
+    }
 
     // variables that are visible to the exception handler (declared volatile)
     volatile bool currently_in_except_block = MP_TAGPTR_TAG0(code_state->exc_sp); // 0 or 1, to detect nested exceptions
@@ -933,8 +935,11 @@ unwind_jump:;
                         #if MICROPY_STACKLESS_STRICT
                         else {
                         deep_recursion_error:
-                            mp_exc_recursion_depth();
+                            mp_raise_recursion_depth();
                         }
+                        #else
+                        // If we couldn't allocate codestate on heap, in
+                        // non non-strict case fall thru to stack allocation.
                         #endif
                     }
                     #endif
@@ -961,7 +966,11 @@ unwind_jump:;
 
                         mp_code_state_t *new_state = mp_obj_fun_bc_prepare_codestate(out_args.fun,
                             out_args.n_args, out_args.n_kw, out_args.args);
-                        m_del(mp_obj_t, out_args.args, out_args.n_alloc);
+                        #if !MICROPY_ENABLE_PYSTACK
+                        // Freeing args at this point does not follow a LIFO order so only do it if
+                        // pystack is not enabled.  For pystack, they are freed when code_state is.
+                        mp_nonlocal_free(out_args.args, out_args.n_alloc * sizeof(mp_obj_t));
+                        #endif
                         if (new_state) {
                             new_state->prev = code_state;
                             code_state = new_state;
@@ -972,6 +981,9 @@ unwind_jump:;
                         else {
                             goto deep_recursion_error;
                         }
+                        #else
+                        // If we couldn't allocate codestate on heap, in
+                        // non non-strict case fall thru to stack allocation.
                         #endif
                     }
                     #endif
@@ -1006,6 +1018,9 @@ unwind_jump:;
                         else {
                             goto deep_recursion_error;
                         }
+                        #else
+                        // If we couldn't allocate codestate on heap, in
+                        // non non-strict case fall thru to stack allocation.
                         #endif
                     }
                     #endif
@@ -1032,7 +1047,11 @@ unwind_jump:;
 
                         mp_code_state_t *new_state = mp_obj_fun_bc_prepare_codestate(out_args.fun,
                             out_args.n_args, out_args.n_kw, out_args.args);
-                        m_del(mp_obj_t, out_args.args, out_args.n_alloc);
+                        #if !MICROPY_ENABLE_PYSTACK
+                        // Freeing args at this point does not follow a LIFO order so only do it if
+                        // pystack is not enabled.  For pystack, they are freed when code_state is.
+                        mp_nonlocal_free(out_args.args, out_args.n_alloc * sizeof(mp_obj_t));
+                        #endif
                         if (new_state) {
                             new_state->prev = code_state;
                             code_state = new_state;
@@ -1043,6 +1062,9 @@ unwind_jump:;
                         else {
                             goto deep_recursion_error;
                         }
+                        #else
+                        // If we couldn't allocate codestate on heap, in
+                        // non non-strict case fall thru to stack allocation.
                         #endif
                     }
                     #endif
@@ -1094,7 +1116,15 @@ unwind_return:
                     if (code_state->prev != NULL) {
                         mp_obj_t res = *sp;
                         mp_globals_set(code_state->old_globals);
-                        code_state = code_state->prev;
+                        mp_code_state_t *new_code_state = code_state->prev;
+                        #if MICROPY_ENABLE_PYSTACK
+                        // Free code_state, and args allocated by mp_call_prepare_args_n_kw_var
+                        // (The latter is implicitly freed when using pystack due to its LIFO nature.)
+                        // The sizeof in the following statement does not include the size of the variable
+                        // part of the struct.  This arg is anyway not used if pystack is enabled.
+                        mp_nonlocal_free(code_state, sizeof(mp_code_state_t));
+                        #endif
+                        code_state = new_code_state;
                         *code_state->sp = res;
                         goto run_code_state;
                     }
@@ -1120,7 +1150,7 @@ unwind_return:
                             }
                         }
                         if (obj == MP_OBJ_NULL) {
-                            obj = mp_obj_new_exception_msg(&mp_type_RuntimeError, "No active exception to reraise");
+                            obj = mp_obj_new_exception_msg(&mp_type_RuntimeError, "no active exception to reraise");
                             RAISE(obj);
                         }
                     } else {
@@ -1436,7 +1466,15 @@ unwind_loop:
             #if MICROPY_STACKLESS
             } else if (code_state->prev != NULL) {
                 mp_globals_set(code_state->old_globals);
-                code_state = code_state->prev;
+                mp_code_state_t *new_code_state = code_state->prev;
+                #if MICROPY_ENABLE_PYSTACK
+                // Free code_state, and args allocated by mp_call_prepare_args_n_kw_var
+                // (The latter is implicitly freed when using pystack due to its LIFO nature.)
+                // The sizeof in the following statement does not include the size of the variable
+                // part of the struct.  This arg is anyway not used if pystack is enabled.
+                mp_nonlocal_free(code_state, sizeof(mp_code_state_t));
+                #endif
+                code_state = new_code_state;
                 size_t n_state = mp_decode_uint_value(code_state->fun_bc->bytecode);
                 fastn = &code_state->state[n_state - 1];
                 exc_stack = (mp_exc_stack_t*)(code_state->state + n_state);

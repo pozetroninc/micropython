@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -27,9 +27,6 @@
 #include <string.h>
 #include <assert.h>
 
-#include "py/nlr.h"
-#include "py/obj.h"
-#include "py/runtime0.h"
 #include "py/runtime.h"
 #include "py/builtin.h"
 #include "py/objtype.h"
@@ -100,19 +97,25 @@ STATIC mp_obj_t dict_make_new(const mp_obj_type_t *type, size_t n_args, size_t n
     return dict_out;
 }
 
-STATIC mp_obj_t dict_unary_op(mp_uint_t op, mp_obj_t self_in) {
+STATIC mp_obj_t dict_unary_op(mp_unary_op_t op, mp_obj_t self_in) {
     mp_obj_dict_t *self = MP_OBJ_TO_PTR(self_in);
     switch (op) {
         case MP_UNARY_OP_BOOL: return mp_obj_new_bool(self->map.used != 0);
         case MP_UNARY_OP_LEN: return MP_OBJ_NEW_SMALL_INT(self->map.used);
+        #if MICROPY_PY_SYS_GETSIZEOF
+        case MP_UNARY_OP_SIZEOF: {
+            size_t sz = sizeof(*self) + sizeof(*self->map.table) * self->map.alloc;
+            return MP_OBJ_NEW_SMALL_INT(sz);
+        }
+        #endif
         default: return MP_OBJ_NULL; // op not supported
     }
 }
 
-STATIC mp_obj_t dict_binary_op(mp_uint_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
+STATIC mp_obj_t dict_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
     mp_obj_dict_t *o = MP_OBJ_TO_PTR(lhs_in);
     switch (op) {
-        case MP_BINARY_OP_IN: {
+        case MP_BINARY_OP_CONTAINS: {
             mp_map_elem_t *elem = mp_map_lookup(&o->map, rhs_in, MP_MAP_LOOKUP);
             return mp_obj_new_bool(elem != NULL);
         }
@@ -187,37 +190,6 @@ STATIC mp_obj_t dict_subscr(mp_obj_t self_in, mp_obj_t index, mp_obj_t value) {
         mp_obj_dict_store(self_in, index, value);
         return mp_const_none;
     }
-}
-
-/******************************************************************************/
-/* dict iterator                                                              */
-
-typedef struct _mp_obj_dict_it_t {
-    mp_obj_base_t base;
-    mp_fun_1_t iternext;
-    mp_obj_t dict;
-    size_t cur;
-} mp_obj_dict_it_t;
-
-STATIC mp_obj_t dict_it_iternext(mp_obj_t self_in) {
-    mp_obj_dict_it_t *self = MP_OBJ_TO_PTR(self_in);
-    mp_map_elem_t *next = dict_iter_next(MP_OBJ_TO_PTR(self->dict), &self->cur);
-
-    if (next == NULL) {
-        return MP_OBJ_STOP_ITERATION;
-    } else {
-        return next->key;
-    }
-}
-
-STATIC mp_obj_t dict_getiter(mp_obj_t self_in, mp_obj_iter_buf_t *iter_buf) {
-    assert(sizeof(mp_obj_dict_it_t) <= sizeof(mp_obj_iter_buf_t));
-    mp_obj_dict_it_t *o = (mp_obj_dict_it_t*)iter_buf;
-    o->base.type = &mp_type_polymorph_iter;
-    o->iternext = dict_it_iternext;
-    o->dict = self_in;
-    o->cur = 0;
-    return MP_OBJ_FROM_PTR(o);
 }
 
 /******************************************************************************/
@@ -476,13 +448,13 @@ STATIC void dict_view_print(const mp_print_t *print, mp_obj_t self_in, mp_print_
     mp_print_str(print, "])");
 }
 
-STATIC mp_obj_t dict_view_binary_op(mp_uint_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
+STATIC mp_obj_t dict_view_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
     // only supported for the 'keys' kind until sets and dicts are refactored
     mp_obj_dict_view_t *o = MP_OBJ_TO_PTR(lhs_in);
     if (o->kind != MP_DICT_VIEW_KEYS) {
         return MP_OBJ_NULL; // op not supported
     }
-    if (op != MP_BINARY_OP_IN) {
+    if (op != MP_BINARY_OP_CONTAINS) {
         return MP_OBJ_NULL; // op not supported
     }
     return dict_binary_op(op, o->dict, rhs_in);
@@ -523,6 +495,20 @@ STATIC mp_obj_t dict_values(mp_obj_t self_in) {
     return dict_view(self_in, MP_DICT_VIEW_VALUES);
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_1(dict_values_obj, dict_values);
+
+/******************************************************************************/
+/* dict iterator                                                              */
+
+STATIC mp_obj_t dict_getiter(mp_obj_t self_in, mp_obj_iter_buf_t *iter_buf) {
+    assert(sizeof(mp_obj_dict_view_it_t) <= sizeof(mp_obj_iter_buf_t));
+    mp_check_self(MP_OBJ_IS_DICT_TYPE(self_in));
+    mp_obj_dict_view_it_t *o = (mp_obj_dict_view_it_t*)iter_buf;
+    o->base.type = &dict_view_it_type;
+    o->kind = MP_DICT_VIEW_KEYS;
+    o->dict = self_in;
+    o->cur = 0;
+    return MP_OBJ_FROM_PTR(o);
+}
 
 /******************************************************************************/
 /* dict constructors & public C API                                           */

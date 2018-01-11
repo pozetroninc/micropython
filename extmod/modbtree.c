@@ -26,12 +26,10 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <errno.h>
+#include <errno.h> // for declaration of global errno variable
 #include <fcntl.h>
 
-#include "py/nlr.h"
 #include "py/runtime.h"
-#include "py/runtime0.h"
 #include "py/stream.h"
 
 #if MICROPY_PY_BTREE
@@ -281,10 +279,10 @@ STATIC mp_obj_t btree_subscr(mp_obj_t self_in, mp_obj_t index, mp_obj_t value) {
     }
 }
 
-STATIC mp_obj_t btree_binary_op(mp_uint_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
+STATIC mp_obj_t btree_binary_op(mp_binary_op_t op, mp_obj_t lhs_in, mp_obj_t rhs_in) {
     mp_obj_btree_t *self = MP_OBJ_TO_PTR(lhs_in);
     switch (op) {
-        case MP_BINARY_OP_IN: {
+        case MP_BINARY_OP_CONTAINS: {
             DBT key, val;
             key.data = (void*)mp_obj_str_get_data(rhs_in, &key.size);
             int res = __bt_get(self->db, &key, &val, 0);
