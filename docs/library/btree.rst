@@ -5,7 +5,7 @@
    :synopsis: simple BTree database
 
 The ``btree`` module implements a simple key-value database using external
-storage (disk files, or in general case, a random-access stream). Keys are
+storage (disk files, or in general case, a random-access `stream`). Keys are
 stored sorted in the database, and besides efficient retrieval by a key
 value, a database also supports efficient ordered range scans (retrieval
 of values with the keys in a given range). On the application interface
@@ -22,8 +22,14 @@ Example::
 
     # First, we need to open a stream which holds a database
     # This is usually a file, but can be in-memory database
-    # using uio.BytesIO, a raw flash section, etc.
-    f = open("mydb", "w+b")
+    # using uio.BytesIO, a raw flash partition, etc.
+    # Oftentimes, you want to create a database file if it doesn't
+    # exist and open if it exists. Idiom below takes care of this.
+    # DO NOT open database with "a+b" access mode.
+    try:
+        f = open("mydb", "r+b")
+    except OSError:
+        f = open("mydb", "w+b")
 
     # Now open a database itself
     db = btree.open(f)
@@ -32,6 +38,11 @@ Example::
     db[b"3"] = b"three"
     db[b"1"] = b"one"
     db[b"2"] = b"two"
+
+    # Assume that any changes are cached in memory unless
+    # explicitly flushed (or database closed). Flush database
+    # at the end of each "transaction".
+    db.flush()
 
     # Prints b'two'
     print(db[b"2"])
@@ -65,24 +76,28 @@ Example::
 Functions
 ---------
 
-.. function:: open(stream, \*, flags=0, cachesize=0, pagesize=0, minkeypage=0)
+.. function:: open(stream, \*, flags=0, pagesize=0, cachesize=0, minkeypage=0)
 
    Open a database from a random-access `stream` (like an open file). All
    other parameters are optional and keyword-only, and allow to tweak advanced
    parameters of the database operation (most users will not need them):
 
-   * `flags` - Currently unused.
-   * `cachesize` - Suggested maximum memory cache size in bytes. For a
+   * *flags* - Currently unused.
+   * *pagesize* - Page size used for the nodes in BTree. Acceptable range
+     is 512-65536. If 0, a port-specific default will be used, optimized for
+     port's memory usage and/or performance.
+   * *cachesize* - Suggested memory cache size in bytes. For a
      board with enough memory using larger values may improve performance.
-     The value is only a recommendation, the module may use more memory if
-     values set too low.
-   * `pagesize` - Page size used for the nodes in BTree. Acceptable range
-     is 512-65536. If 0, underlying I/O block size will be used (the best
-     compromise between memory usage and performance).
-   * `minkeypage` - Minimum number of keys to store per page. Default value
+     Cache policy is as follows: entire cache is not allocated at once;
+     instead, accessing a new page in database will allocate a memory buffer
+     for it, until value specified by *cachesize* is reached. Then, these
+     buffers will be managed using LRU (least recently used) policy. More
+     buffers may still be allocated if needed (e.g., if a database contains
+     big keys and/or values). Allocated cache buffers aren't reclaimed.
+   * *minkeypage* - Minimum number of keys to store per page. Default value
      of 0 equivalent to 2.
 
-   Returns a `BTree` object, which implements a dictionary protocol (set
+   Returns a BTree object, which implements a dictionary protocol (set
    of methods), and some additional methods described below.
 
 Methods
@@ -92,7 +107,7 @@ Methods
 
    Close the database. It's mandatory to close the database at the end of
    processing, as some unwritten data may be still in the cache. Note that
-   this does not close underlying streamw with which the database was opened,
+   this does not close underlying stream with which the database was opened,
    it should be closed separately (which is also mandatory to make sure that
    data flushed from buffer to the underlying storage).
 
@@ -101,10 +116,10 @@ Methods
    Flush any data in cache to the underlying stream.
 
 .. method:: btree.__getitem__(key)
-.. method:: btree.get(key, default=None)
-.. method:: btree.__setitem__(key, val)
-.. method:: btree.__detitem__(key)
-.. method:: btree.__contains__(key)
+            btree.get(key, default=None)
+            btree.__setitem__(key, val)
+            btree.__detitem__(key)
+            btree.__contains__(key)
 
    Standard dictionary methods.
 
@@ -114,20 +129,20 @@ Methods
    to get access to all keys in order.
 
 .. method:: btree.keys([start_key, [end_key, [flags]]])
-.. method:: btree.values([start_key, [end_key, [flags]]])
-.. method:: btree.items([start_key, [end_key, [flags]]])
+            btree.values([start_key, [end_key, [flags]]])
+            btree.items([start_key, [end_key, [flags]]])
 
    These methods are similar to standard dictionary methods, but also can
    take optional parameters to iterate over a key sub-range, instead of
-   the entire database. Note that for all 3 methods, `start_key` and
-   `end_key` arguments represent key values. For example, ``values()``
+   the entire database. Note that for all 3 methods, *start_key* and
+   *end_key* arguments represent key values. For example, `values()`
    method will iterate over values corresponding to they key range
-   given. None values for `start_key` means "from the first key", no
-   `end_key` or its value of None means "until the end of database".
-   By default, range is inclusive of `start_key` and exclusive of
-   `end_key`, you can include `end_key` in iteration by passing `flags`
+   given. None values for *start_key* means "from the first key", no
+   *end_key* or its value of None means "until the end of database".
+   By default, range is inclusive of *start_key* and exclusive of
+   *end_key*, you can include *end_key* in iteration by passing *flags*
    of `btree.INCL`. You can iterate in descending key direction
-   by passing `flags` of `btree.DESC`. The flags values can be ORed
+   by passing *flags* of `btree.DESC`. The flags values can be ORed
    together.
 
 Constants

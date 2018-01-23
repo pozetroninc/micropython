@@ -1,5 +1,5 @@
 /*
- * This file is part of the Micro Python project, http://micropython.org/
+ * This file is part of the MicroPython project, http://micropython.org/
  *
  * The MIT License (MIT)
  *
@@ -313,9 +313,12 @@ void mp_emit_bc_start_pass(emit_t *emit, pass_kind_t pass, scope_t *scope) {
     emit->scope = scope;
     emit->last_source_line_offset = 0;
     emit->last_source_line = 1;
+    #ifndef NDEBUG
+    // With debugging enabled labels are checked for unique assignment
     if (pass < MP_PASS_EMIT) {
         memset(emit->label_offsets, -1, emit->max_num_labels * sizeof(mp_uint_t));
     }
+    #endif
     emit->bytecode_offset = 0;
     emit->code_info_offset = 0;
 
@@ -495,7 +498,6 @@ void mp_emit_bc_label_assign(emit_t *emit, mp_uint_t l) {
         emit->label_offsets[l] = emit->bytecode_offset;
     } else {
         // ensure label offset has not changed from MP_PASS_CODE_SIZE to MP_PASS_EMIT
-        //printf("l%d: (at %d vs %d)\n", l, emit->bytecode_offset, emit->label_offsets[l]);
         assert(emit->label_offsets[l] == emit->bytecode_offset);
     }
 }
@@ -550,7 +552,7 @@ void mp_emit_bc_load_const_obj(emit_t *emit, mp_obj_t obj) {
 void mp_emit_bc_load_null(emit_t *emit) {
     emit_bc_pre(emit, 1);
     emit_write_bytecode_byte(emit, MP_BC_LOAD_NULL);
-};
+}
 
 void mp_emit_bc_load_fast(emit_t *emit, qstr qst, mp_uint_t local_num) {
     (void)qst;
@@ -902,7 +904,7 @@ void mp_emit_bc_make_closure(emit_t *emit, scope_t *scope, mp_uint_t n_closed_ov
         emit_write_bytecode_byte(emit, n_closed_over);
     } else {
         assert(n_closed_over <= 255);
-        emit_bc_pre(emit, -2 - n_closed_over + 1);
+        emit_bc_pre(emit, -2 - (mp_int_t)n_closed_over + 1);
         emit_write_bytecode_byte_raw_code(emit, MP_BC_MAKE_CLOSURE_DEFARGS, scope->raw_code);
         emit_write_bytecode_byte(emit, n_closed_over);
     }

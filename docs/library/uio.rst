@@ -4,7 +4,9 @@
 .. module:: uio
    :synopsis: input/output streams
 
-This module contains additional types of stream (file-like) objects
+|see_cpython_module| :mod:`python:io`.
+
+This module contains additional types of `stream` (file-like) objects
 and helper functions.
 
 Conceptual hierarchy
