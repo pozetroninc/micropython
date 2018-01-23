@@ -34,11 +34,6 @@ one_second = const(1000)
 one_minute = const(60000)
 five_minutes = const(300000)
 
-# Fake main loop in case user supplied main isn't available
-
-class  fake_main(object):
-    def main_loop():
-        pass
 
 
 def epilog():
@@ -88,93 +83,94 @@ def epilog():
         del(utime)
 
 
+# This function does not raise
 def flush_logs():
     import logger
-    if not logger.file_size:
-        logs = logger._logs
-        if len(logs) == 0:
-            return
-    else:
-        import uos
-        try:
-            if uos.stat(logger._LOG_FILE)[6] == 0:  # size == 0
-                return
-        except OSError:  # No file = no logs = no problem
-            del logger
-            return
-        finally:
-            del uos
     try:
-        try:
-            # TODO: In the future, find a way to compute the HMAC on the file rather piece by piece than after
-            # loading the list to memory.
-            if not logger.file_size:
-                json = [{'text': x} for x in logger._logs]
-                if logger._overflow_errors:
-                    json.append({'text': '{} failed writes to log file due to logger.file_size={}'.format(logger._overflow_errors, logger.file_size)})
-                make_validated_request(API_BASE + '/logs/', KEY_ID, HMAC_SECRET,
-                                               method='POST', json=json, debug=pozetron.debug)
-                del json
-            else:
-                # If there are overflow errors we send them separately to make sure they get there.
-                if logger._overflow_errors:
-                    json = [{'text': '{} failed writes to log file due to logger.file_size={}'.format(logger._overflow_errors, logger.file_size)}]
-                    make_validated_request(API_BASE + '/logs/', KEY_ID, HMAC_SECRET,
-                                                       method='POST', json=json, debug=pozetron.debug)
-                    del json
-                    logger._overflow_errors = 0
-                # If there were no overflow errors we just send the log file.
-                make_validated_request(API_BASE + '/logs/', KEY_ID, HMAC_SECRET,
-                                               method='POST', debug=pozetron.debug, in_file=logger._LOG_FILE)
-            # Success - clear logs
-            logger._overflow_errors = 0
-            logger._send_fails = 0
-            if not logger.file_size:
-                logger._logs.clear()
-            else:  # no truncate() so we use a workaround
-                with open(logger._LOG_FILE, 'w') as logfile:
-                    logfile.write('')
-        except RequestError as ex:
+        if not logger.file_size:
+            logs = logger._logs
+            if len(logs) == 0:
+                return
+        else:
+            import uos
             try:
-                import ujson
-                import uos
-                if len(ex.args) > 3 and ujson.loads(ex.args[2])['detail'].startswith('JSON parse error'):
-                    with open(logger._LOG_FILE, 'rb') as logfile:
-                        for byte in logfile:
-                            if byte == '\00' or '\FF':
-                                corrupt = True
-                                break
-                        if corrupt:
-                                with open(logger._LOG_FILE, 'rb') as logfile:
-                                    with open(logger._LOG_FILE+'.temp', 'wb') as temp_logfile:
-                                        for byte in logfile:
-                                            if not (byte == '\00' or '\FF'):
-                                                temp_logfile.wrtie(byte)
-                                uos.rename(logger._LOG_FILE+'.temp', logger._LOG_FILE)
-            except Exception as ex:
-                raise ex
+                if uos.stat(logger._LOG_FILE)[6] == 0:  # size == 0
+                    return
+            except OSError:  # No file = no logs = no problem
+                return
             finally:
-                del(ujson)
-                del(uos)
+                del uos
+        try:
+            try:
+                # TODO: In the future, find a way to compute the HMAC on the file rather piece by piece than after
+                # loading the list to memory.
+                if not logger.file_size:
+                    json = [{'text': x} for x in logger._logs]
+                    if logger._overflow_errors:
+                        json.append({'text': '{} failed writes to log file due to logger.file_size={}'.format(logger._overflow_errors, logger.file_size)})
+                    make_validated_request(API_BASE + '/logs/', KEY_ID, HMAC_SECRET,
+                                                   method='POST', json=json, debug=pozetron.debug)
+                    del json
+                else:
+                    # If there are overflow errors we send them separately to make sure they get there.
+                    if logger._overflow_errors:
+                        json = [{'text': '{} failed writes to log file due to logger.file_size={}'.format(logger._overflow_errors, logger.file_size)}]
+                        make_validated_request(API_BASE + '/logs/', KEY_ID, HMAC_SECRET,
+                                                           method='POST', json=json, debug=pozetron.debug)
+                        del json
+                        logger._overflow_errors = 0
+                    # If there were no overflow errors we just send the log file.
+                    make_validated_request(API_BASE + '/logs/', KEY_ID, HMAC_SECRET,
+                                                   method='POST', debug=pozetron.debug, in_file=logger._LOG_FILE)
+                # Success - clear logs
+                logger._overflow_errors = 0
+                logger._send_fails = 0
+                if not logger.file_size:
+                    logger._logs.clear()
+                else:  # no truncate() so we use a workaround
+                    with open(logger._LOG_FILE, 'w') as logfile:
+                        logfile.write('')
+            except RequestError as ex:
+                try:
+                    import ujson
+                    import uos
+                    if len(ex.args) > 3 and ujson.loads(ex.args[2])['detail'].startswith('JSON parse error'):
+                        with open(logger._LOG_FILE, 'rb') as logfile:
+                            for byte in logfile:
+                                if byte == '\00' or '\FF':
+                                    corrupt = True
+                                    break
+                            if corrupt:
+                                    with open(logger._LOG_FILE, 'rb') as logfile:
+                                        with open(logger._LOG_FILE+'.temp', 'wb') as temp_logfile:
+                                            for byte in logfile:
+                                                if not (byte == '\00' or '\FF'):
+                                                    temp_logfile.wrtie(byte)
+                                    uos.rename(logger._LOG_FILE+'.temp', logger._LOG_FILE)
+                    raise ex  # see outer `except` below
+                finally:
+                    del(ujson)
+                    del(uos)
+            #finally:
+                ## Make sure file is closed
+                #if logger.file_size:
+                    #logs.close()
+                # Delete variable
+                # The follow call to del causes:
+                # MemoryError: memory allocation failed, allocating 1073672184 bytes
+                #del logs
         except Exception as ex:
-            raise ex
-        #finally:
-            ## Make sure file is closed
-            #if logger.file_size:
-                #logs.close()
-            # Delete variable
-            # The follow call to del causes:
-            # MemoryError: memory allocation failed, allocating 1073672184 bytes
-            #del logs
-    except Exception as ex:
-        #sys.print_exception(ex)
-        log(exc_logline.format('send logs', ex))
-        logger._send_fails += 1
-    # If too many fails, reset log
-    if logger._send_fails >= 3:
-        clear_logs()
-        log('Failure sending logs, truncated logs have been lost')
-    del logger
+            #sys.print_exception(ex)
+            log(exc_logline.format('send logs', ex))
+            logger._send_fails += 1
+        # If too many fails, reset log
+        if logger._send_fails >= 3:
+            clear_logs()
+            log('Failure sending logs, truncated logs have been lost')
+    except Exception as o:
+        sys.print_exception(o)
+    finally:
+        del logger
 
 
 def clear_logs():
@@ -227,14 +223,12 @@ def post_checkin():
 def on_startup():
     # This function MUST be called once on device startup.
     post_checkin()
+    #log('on_startup completed')
 
 
 def _reboot():
     log('Rebooting')
-    try:
-        flush_logs()
-    except Exception:
-        pass
+    flush_logs()
     import machine
     machine.reset()
 
@@ -378,13 +372,13 @@ def refresh_scripts(debug=pozetron.debug):
                                                      secret=HMAC_SECRET).json()
             except Exception as ex:
                 log(exc_logline.format('get script info', ex))
-                raise
+                raise ex
             try:
                 script_secret = make_validated_request(scripts_url + script['id'] + '/secret/',
                                                        key_id=KEY_ID,
                                                        secret=HMAC_SECRET).json()['secret']
-            except Exception as exc:
-                log(exc_logline('get script secret', ex))
+            except Exception as ex:
+                log(exc_logline.format('get script secret', ex))
                 raise ex
             # Try to stop people overriding pozetron functionality
             print(script_info['name'])
@@ -452,8 +446,6 @@ class ScriptStore:
                         pass
                 # On some platforms FileNotFoundError doesn't exist
                 except OSError:
-                    continue
-                except FileNotFoundError:
                     continue
                 self._cache[id] = (filename, signature)
 

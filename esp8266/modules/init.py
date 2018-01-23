@@ -60,41 +60,33 @@ except:
     log('Error setting up the scripts directory')
 
 # Everything below this line stays resident during the devices uptime
+import pozetron
 try:
-    from pozetron import check_commands
-    check_commands()
-    del(check_commands)
+    pozetron.check_commands()
     gc.collect()
 except:
     log('Error checking commands on boot')
 
 
-# The following will upate the device with all the scripts assigned to it
+# The following will update the device with all the scripts assigned to it
 try:
-    from pozetron import refresh_scripts
-    refresh_scripts()
-    del(refresh_scripts)
+    pozetron.refresh_scripts()
     gc.collect()
 except:
     log('Error refreshing scripts on boot')
 
+del pozetron
+gc.collect()
 
 ###############################################
 #              Initialize all of the user supplied variables                       #
 ###############################################
 try:
     log('Device rebooted')
-    import main
-    getattr(main, 'main_loop')
-except (ImportError, AttributeError):
-    try:
-        log('Error importing main')
-        log("Proceeding with empty main_loop.")
-        from pozetron import fake_main as main
-    except:
-        log('Error importing fake main')
-except:
-    log('Error importing main')
+    from main import main_loop
+except Exception as ex:
+    log('Error importing main: {}'.format(ex))
+    from machine import idle as main_loop
 
 while True:
 
@@ -104,48 +96,28 @@ while True:
 
     # Main Event Loop
     try:
-        main.main_loop()
+        main_loop()
     except Exception as ex:
         gc.collect()
-        try:
-            log(str(ex))
-            from pozetron import flush_logs
-            flush_logs()
-            del(flush_logs)
-        except:
-            print('Flushing logs failed')
+        log('Error in main_loop: {}'.format(ex))
+        from pozetron import flush_logs
+        flush_logs()
+        del flush_logs
     finally:
-        try:
-            import epilog
-            del(epilog)
-        except:
-            pass
         gc.collect()
 
 ###############################################
 #                            Start the pozetron epilog                                       #
 ###############################################
 
+    import pozetron
     try:
-        from pozetron import epilog
-        epilog()
-        del(epilog)
+        pozetron.epilog()
+    except Exception as ex:
+        log('Pozetron epilog failed with {}'.format(ex))
+    finally:
         # This decision to flush the logs every time is a trade off to provide quicker access to the logs
         # at the expense of more cycles spent on housekeeping tasks.
-        from pozetron import flush_logs
-        flush_logs()
-        del(flush_logs)
-    except Exception as ex:
-        try:
-            log('Pozetron epilog failed with {}'.format(ex))
-            from pozetron import flush_logs
-            flush_logs()
-            del(flush_logs)
-        except Exception as ex:
-            log('Flushing logs failed with {}'.format(ex))
-    finally:
-        epilog = None
-        del(epilog)
-        flush_logs = None
-        del(flush_logs)
+        pozetron.flush_logs()
+        del pozetron
         gc.collect()

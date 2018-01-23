@@ -43,7 +43,7 @@ def connect_with_saved_credentials(min_timeout= 15000, max_timeout= 30000, max_r
         while timeout <= max_timeout and not nic.isconnected():
             print('Waiting {} tics for the network'.format(timeout))
             start = utime.ticks_ms()
-            while not nic.isconnected() and (utime.ticks_diff(start, utime.ticks_ms()) < timeout):
+            while not nic.isconnected() and utime.ticks_diff(utime.ticks_ms(), start) < timeout:
                 utime.sleep(1)
             if not nic.isconnected():
                 current_round = current_round + 1
@@ -58,11 +58,14 @@ def connect_with_saved_credentials(min_timeout= 15000, max_timeout= 30000, max_r
             try:
                 import ntptime
                 current_round = 1
-                while not ntp_success and current_round < max_rounds:
+                while not ntp_success:
                     try:
                         ntptime.settime()
                         ntp_success = True
                     except OSError:
+                        current_round += 1
+                        if current_round > max_rounds:
+                            break
                         utime.sleep(2)
                 if not ntp_success:
                     print('ntp server unreachable')
@@ -95,7 +98,7 @@ def request_credentials():
 
     import web_server
     try:
-        webserv = web_server.network_bootstrap_webserver(debug=True)
+        web_server.network_bootstrap_webserver(debug=True)
     except Exception as ex:
         print('Exception from webserver: {}'.format(ex))
         import os
