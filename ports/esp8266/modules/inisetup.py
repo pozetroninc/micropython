@@ -63,7 +63,7 @@ CACHE_FILE_NAME = '/scripts/.scripts_cache'
     except OSError:
         print('Nothing in resources')
     finally:
-        resource = None
+        resources = None
         del(resources)
     try:
         from user import resources
