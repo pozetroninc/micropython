@@ -10,14 +10,16 @@ class ADC -- analog to digital conversion
 
         import pyb
     
-        adc = pyb.ADC(pin)              # create an analog object from a pin
-        val = adc.read()                # read an analog value
+        adc = pyb.ADC(pin)                  # create an analog object from a pin
+        val = adc.read()                    # read an analog value
     
-        adc = pyb.ADCAll(resolution)    # create an ADCAll object
-        val = adc.read_channel(channel) # read the given channel
-        val = adc.read_core_temp()      # read MCU temperature
-        val = adc.read_core_vbat()      # read MCU VBAT
-        val = adc.read_core_vref()      # read MCU VREF
+        adc = pyb.ADCAll(resolution)        # create an ADCAll object
+        adc = pyb.ADCAll(resolution, mask)  # create an ADCAll object for selected analog channels
+        val = adc.read_channel(channel)     # read the given channel
+        val = adc.read_core_temp()          # read MCU temperature
+        val = adc.read_core_vbat()          # read MCU VBAT
+        val = adc.read_core_vref()          # read MCU VREF
+        val = adc.read_vref()               # read MCU supply voltage
 
  
 Constructors
@@ -74,34 +76,101 @@ Methods
            for val in buf:                     # loop over all values
                print(val)                      # print the value out
 
-       This function does not allocate any memory.
+       This function does not allocate any heap memory. It has blocking behaviour:
+       it does not return to the calling program until the buffer is full.
+
+    .. method:: ADC.read_timed_multi((adcx, adcy, ...), (bufx, bufy, ...), timer)
+
+       This is a static method. It can be used to extract relative timing or
+       phase data from multiple ADC's.
+
+       It reads analog values from multiple ADC's into buffers at a rate set by
+       the *timer* object. Each time the timer triggers a sample is rapidly
+       read from each ADC in turn.
+
+       ADC and buffer instances are passed in tuples with each ADC having an
+       associated buffer. All buffers must be of the same type and length and
+       the number of buffers must equal the number of ADC's.
+
+       Buffers can be ``bytearray`` or ``array.array`` for example. The ADC values
+       have 12-bit resolution and are stored directly into the buffer if its element
+       size is 16 bits or greater.  If buffers have only 8-bit elements (eg a
+       ``bytearray``) then the sample resolution will be reduced to 8 bits.
+
+       *timer* must be a Timer object. The timer must already be initialised
+       and running at the desired sampling frequency.
+
+       Example reading 3 ADC's::
+
+           adc0 = pyb.ADC(pyb.Pin.board.X1)    # Create ADC's
+           adc1 = pyb.ADC(pyb.Pin.board.X2)
+           adc2 = pyb.ADC(pyb.Pin.board.X3)
+           tim = pyb.Timer(8, freq=100)        # Create timer
+           rx0 = array.array('H', (0 for i in range(100))) # ADC buffers of
+           rx1 = array.array('H', (0 for i in range(100))) # 100 16-bit words
+           rx2 = array.array('H', (0 for i in range(100)))
+           # read analog values into buffers at 100Hz (takes one second)
+           pyb.ADC.read_timed_multi((adc0, adc1, adc2), (rx0, rx1, rx2), tim)
+           for n in range(len(rx0)):
+               print(rx0[n], rx1[n], rx2[n])
+
+       This function does not allocate any heap memory. It has blocking behaviour:
+       it does not return to the calling program until the buffers are full.
+
+       The function returns ``True`` if all samples were acquired with correct
+       timing. At high sample rates the time taken to acquire a set of samples
+       can exceed the timer period. In this case the function returns ``False``,
+       indicating a loss of precision in the sample interval. In extreme cases
+       samples may be missed.
+
+       The maximum rate depends on factors including the data width and the
+       number of ADC's being read. In testing two ADC's were sampled at a timer
+       rate of 210kHz without overrun. Samples were missed at 215kHz.  For three
+       ADC's the limit is around 140kHz, and for four it is around 110kHz.
+       At high sample rates disabling interrupts for the duration can reduce the
+       risk of sporadic data loss.
 
 The ADCAll Object
 -----------------
 
 .. only:: port_pyboard
 
-    Instantiating this changes all ADC pins to analog inputs. The raw MCU temperature,
+    Instantiating this changes all masked ADC pins to analog inputs. The preprocessed MCU temperature,
     VREF and VBAT data can be accessed on ADC channels 16, 17 and 18 respectively.
-    Appropriate scaling will need to be applied. The temperature sensor on the chip
-    has poor absolute accuracy and is suitable only for detecting temperature changes.
+    Appropriate scaling is handled according to reference voltage used (usually 3.3V).
+    The temperature sensor on the chip is factory calibrated and allows to read the die temperature
+    to +/- 1 degree centigrade. Although this sounds pretty accurate, don't forget that the MCU's internal
+    temperature is measured. Depending on processing loads and I/O subsystems active the die temperature
+    may easily be tens of degrees above ambient temperature. On the other hand a pyboard woken up after a
+    long standby period will show correct ambient temperature within limits mentioned above.
 
-    The ``ADCAll`` ``read_core_vbat()`` and ``read_core_vref()`` methods read
-    the backup battery voltage and the (1.21V nominal) reference voltage using the
-    3.3V supply as a reference. Assuming the ``ADCAll`` object has been Instantiated with
-    ``adc = pyb.ADCAll(12)`` the 3.3V supply voltage may be calculated:
-    
-    ``v33 = 3.3 * 1.21 / adc.read_core_vref()``
+    The ``ADCAll`` ``read_core_vbat()``, ``read_vref()`` and ``read_core_vref()`` methods read
+    the backup battery voltage, reference voltage and the (1.21V nominal) reference voltage using the
+    actual supply as a reference. All results are floating point numbers giving direct voltage values.
 
-    If the 3.3V supply is correct the value of ``adc.read_core_vbat()`` will be
-    valid. If the supply voltage can drop below 3.3V, for example in in battery
-    powered systems with a discharging battery, the regulator will fail to preserve
-    the 3.3V supply resulting in an incorrect reading. To produce a value which will
-    remain valid under these circumstances use the following:
+    ``read_core_vbat()`` returns the voltage of the backup battery. This voltage is also adjusted according
+    to the actual supply voltage. To avoid analog input overload the battery voltage is measured
+    via a voltage divider and scaled according to the divider value. To prevent excessive loads
+    to the backup battery, the voltage divider is only active during ADC conversion.
 
-    ``vback = adc.read_core_vbat() * 1.21 / adc.read_core_vref()``
+    ``read_vref()`` is evaluated by measuring the internal voltage reference and backscale it using
+    factory calibration value of the internal voltage reference. In most cases the reading would be close
+    to 3.3V. If the pyboard is operated from a battery, the supply voltage may drop to values below 3.3V.
+    The pyboard will still operate fine as long as the operating conditions are met. With proper settings
+    of MCU clock, flash access speed and programming mode it is possible to run the pyboard down to
+    2 V and still get useful ADC conversion.
 
-    It is possible to access these values without incurring the side effects of ``ADCAll``::
+    It is very important to make sure analog input voltages never exceed actual supply voltage.
+
+    Other analog input channels (0..15) will return unscaled integer values according to the selected
+    precision.
+
+    To avoid unwanted activation of analog inputs (channel 0..15) a second prarmeter can be specified.
+    This parameter is a binary pattern where each requested analog input has the corresponding bit set.
+    The default value is 0xffffffff which means all analog inputs are active. If just the internal
+    channels (16..18) are required, the mask value should be 0x70000.
+ 
+    It is possible to access channle 16..18 values without incurring the side effects of ``ADCAll``::
     
         def adcread(chan):                              # 16 temp 17 vbat 18 vref
             assert chan >= 16 and chan <= 18, 'Invalid ADC channel'
@@ -140,4 +209,5 @@ The ADCAll Object
         def temperature():
             return 25 + 400 * (3.3 * adcread(16) / 4096 - 0.76)
 
-    
+    Note that this example is only valid for the F405 MCU and all values are not corrected by Vref and
+    factory calibration data.

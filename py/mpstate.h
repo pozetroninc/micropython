@@ -78,7 +78,6 @@ typedef struct _mp_state_mem_t {
 
     int gc_stack_overflow;
     size_t gc_stack[MICROPY_ALLOC_GC_STACK_SIZE];
-    size_t *gc_sp;
     uint16_t gc_lock_depth;
 
     // This variable controls auto garbage collection.  If set to 0 then the
@@ -167,6 +166,10 @@ typedef struct _mp_state_vm_t {
 
     // root pointers for extmod
 
+    #if MICROPY_REPL_EVENT_DRIVEN
+    vstr_t *repl_line;
+    #endif
+
     #if MICROPY_PY_OS_DUPTERM
     mp_obj_t dupterm_objs[MICROPY_PY_OS_DUPTERM];
     mp_obj_t dupterm_arr_obj;
@@ -196,7 +199,9 @@ typedef struct _mp_state_vm_t {
     mp_thread_mutex_t qstr_mutex;
     #endif
 
+    #if MICROPY_ENABLE_COMPILER
     mp_uint_t mp_optimise_value;
+    #endif
 
     // size of the emergency exception buf, if it's dynamically allocated
     #if MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF && MICROPY_EMERGENCY_EXCEPTION_BUF_SIZE == 0

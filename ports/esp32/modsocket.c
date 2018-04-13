@@ -83,19 +83,6 @@ void check_for_exceptions() {
     }
 }
 
-STATIC mp_obj_t socket_close(const mp_obj_t arg0) {
-    socket_obj_t *self = MP_OBJ_TO_PTR(arg0);
-    if (self->fd >= 0) {
-        int ret = lwip_close_r(self->fd);
-        if (ret != 0) {
-            exception_from_errno(errno);
-        }
-        self->fd = -1;
-    }
-    return mp_const_none;
-}
-STATIC MP_DEFINE_CONST_FUN_OBJ_1(socket_close_obj, socket_close);
-
 static int _socket_getaddrinfo2(const mp_obj_t host, const mp_obj_t portx, struct addrinfo **resp) {
     const struct addrinfo hints = {
         .ai_family = AF_INET,
@@ -450,6 +437,16 @@ STATIC mp_uint_t socket_stream_ioctl(mp_obj_t self_in, mp_uint_t request, uintpt
         if (FD_ISSET(socket->fd, &wfds)) ret |= MP_STREAM_POLL_WR;
         if (FD_ISSET(socket->fd, &efds)) ret |= MP_STREAM_POLL_HUP;
         return ret;
+    } else if (request == MP_STREAM_CLOSE) {
+        if (socket->fd >= 0) {
+            int ret = lwip_close_r(socket->fd);
+            if (ret != 0) {
+                *errcode = errno;
+                return MP_STREAM_ERROR;
+            }
+            socket->fd = -1;
+        }
+        return 0;
     }
 
     *errcode = MP_EINVAL;
@@ -457,8 +454,8 @@ STATIC mp_uint_t socket_stream_ioctl(mp_obj_t self_in, mp_uint_t request, uintpt
 }
 
 STATIC const mp_map_elem_t socket_locals_dict_table[] = {
-    { MP_OBJ_NEW_QSTR(MP_QSTR___del__), (mp_obj_t)&socket_close_obj },
-    { MP_OBJ_NEW_QSTR(MP_QSTR_close), (mp_obj_t)&socket_close_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR___del__), (mp_obj_t)&mp_stream_close_obj },
+    { MP_OBJ_NEW_QSTR(MP_QSTR_close), (mp_obj_t)&mp_stream_close_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_bind), (mp_obj_t)&socket_bind_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_listen), (mp_obj_t)&socket_listen_obj },
     { MP_OBJ_NEW_QSTR(MP_QSTR_accept), (mp_obj_t)&socket_accept_obj },
@@ -520,9 +517,11 @@ STATIC mp_obj_t get_socket(size_t n_args, const mp_obj_t *args) {
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(get_socket_obj, 0, 3, get_socket);
 
-STATIC mp_obj_t esp_socket_getaddrinfo(const mp_obj_t host, const mp_obj_t port) {
+STATIC mp_obj_t esp_socket_getaddrinfo(size_t n_args, const mp_obj_t *args) {
+    // TODO support additional args beyond the first two
+
     struct addrinfo *res = NULL;
-    _socket_getaddrinfo2(host, port, &res);
+    _socket_getaddrinfo2(args[0], args[1], &res);
     mp_obj_t ret_list = mp_obj_new_list(0, NULL);
 
     for (struct addrinfo *resi = res; resi; resi = resi->ai_next) {
@@ -552,7 +551,7 @@ STATIC mp_obj_t esp_socket_getaddrinfo(const mp_obj_t host, const mp_obj_t port)
     if (res) lwip_freeaddrinfo(res);
     return ret_list;
 }
-STATIC MP_DEFINE_CONST_FUN_OBJ_2(esp_socket_getaddrinfo_obj, esp_socket_getaddrinfo);
+STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esp_socket_getaddrinfo_obj, 2, 6, esp_socket_getaddrinfo);
 
 STATIC mp_obj_t esp_socket_initialize() {
     static int initialized = 0;
