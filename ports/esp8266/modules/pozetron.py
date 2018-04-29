@@ -48,7 +48,7 @@ def epilog():
         for attempt in range(3):
             try:
                 # Check commands before refreshing scripts so reboot remains a viable failsafe
-                if utime.ticks_diff(now, pozetron.last_checked_commands) > one_minute:
+                if utime.ticks_diff(now, pozetron.last_checked_commands) > one_minute or pozetron.last_checked_commands is None:
                     try:
                         check_commands()
                         pozetron.last_checked_commands = now
@@ -58,7 +58,7 @@ def epilog():
                     except RequestError:
                         pass
 
-                if utime.ticks_diff(now, pozetron.last_refreshed_scripts) > one_minute:
+                if utime.ticks_diff(now, pozetron.last_refreshed_scripts) > one_minute or pozetron.last_refreshed_scripts is None:
                     try:
                         refresh_scripts()
                         pozetron.last_refreshed_scripts = now

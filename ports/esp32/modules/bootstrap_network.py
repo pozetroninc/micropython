@@ -19,9 +19,13 @@ def connect_with_saved_credentials(min_timeout= 15000, max_timeout= 30000, max_r
         network_psk = network_config.network_psk
         print("We've been provided network credentials, connecting for the first time.")
         del(network_config)
+    # The below does not work on the ESP32 port as it doesn't store wifi credentials in flash.
     except (ImportError, AttributeError):
-        # Credentials are only used first time to bootstrap, then they are deleted.
-        print('Starting up with network config from flash.')
+        ## Credentials are only used first time to bootstrap, then they are deleted.
+        #print('Starting up with network config from flash.')
+        print('Something went wrong and no wifi credentials were provided.')
+        import machine
+        machine.reset()
 
     try:
         import network
@@ -74,10 +78,11 @@ def connect_with_saved_credentials(min_timeout= 15000, max_timeout= 30000, max_r
     finally:
         del(utime)
 
-    if nic.isconnected():
-        # The network credentials are stored in the flash, so delete them from the filesystem to keep them safe
-        with open('/network_config.py', 'w') as config_file:
-            config_file.write('#REDACTED')
+    # The below does not work on the ESP32 port as it doesn't store wifi credentials in flash.
+    #if nic.isconnected():
+    #    # The network credentials are stored in the flash, so delete them from the filesystem to keep them safe
+    #    with open('/network_config.py', 'w') as config_file:
+    #        config_file.write('#REDACTED')
 
     gc.collect()
     return ntp_success

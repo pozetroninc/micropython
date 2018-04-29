@@ -61,9 +61,9 @@ CACHE_FILE_NAME = '/scripts/.scripts_cache'
         from user import resources
         from pozetron_config import SCRIPTS_DIR
         try:
-            uos.listdir(SCRIPTS_DIR.split('/')[1])
+            uos.listdir(SCRIPTS_DIR.rsplit('/', 2)[1])
         except OSError:
-            uos.mkdir(SCRIPTS_DIR.split('/')[1])
+            uos.mkdir(SCRIPTS_DIR.rsplit('/', 2)[1])
         for resource in resources:
             with open(SCRIPTS_DIR+'.'.join(resource.rsplit('_', 1)), 'wb') as resource_file:
                 resource_file.write(bytes(x for x in resources[resource]))
