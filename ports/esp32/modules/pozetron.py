@@ -1,6 +1,7 @@
 import gc
 import os
 import sys
+import utime
 
 from uhttp_signature.authed_urequests import make_validated_request, RequestError, SignatureException
 
@@ -33,143 +34,150 @@ COMMAND_ORDER = {
 one_second = const(1000)
 one_minute = const(60000)
 five_minutes = const(300000)
+one_day = const(24*60*60*1000)
+
 
 
 def epilog():
-    try:
-        import utime
-        # We're trying to be cooperative here.
-        utime.sleep_ms(0)
-        now = utime.ticks_ms()
+    # We're trying to be cooperative here.
+    utime.sleep_ms(0)
+    now = utime.ticks_ms()
 
-        # In the case of an signature error (client or server) try update the system time in
-        # case the clock has skewed significantly
-        for attempt in range(3):
-            try:
-                # Check commands before refreshing scripts so reboot remains a viable failsafe
-                if utime.ticks_diff(now, pozetron.last_checked_commands) > one_minute or pozetron.last_checked_commands is None:
-                    try:
-                        check_commands()
-                        pozetron.last_checked_commands = now
-                        flush_logs()
-                    except SignatureException as e:
-                        raise e
-                    except RequestError:
-                        pass
-
-                if utime.ticks_diff(now, pozetron.last_refreshed_scripts) > one_minute or pozetron.last_refreshed_scripts is None:
-                    try:
-                        refresh_scripts()
-                        pozetron.last_refreshed_scripts = now
-                        flush_logs()
-                    except SignatureException as e:
-                        raise e
-                    except RequestError:
-                        pass
-            except SignatureException:
-                # Try to set the time through NTP, but not too hard
+    # In the case of an signature error (client or server) try update the system time in
+    # case the clock has skewed significantly
+    for attempt in range(3):
+        try:
+            # Check commands before refreshing scripts so reboot remains a viable failsafe
+            if utime.ticks_diff(now, pozetron.last_checked_commands) > one_minute or pozetron.last_checked_commands is None:
                 try:
-                    import ntptime
-                    ntptime.settime()
-                except:
+                    check_commands()
+                    pozetron.last_checked_commands = now
+                    flush_logs()
+                except SignatureException as ex:
+                    raise ex
+                except RequestError:
                     pass
-                finally:
-                    ntptime = None
-                    del(ntptime)
-            else:
-                break
-    finally:
-        del(utime)
+
+            if utime.ticks_diff(now, pozetron.last_refreshed_scripts) > one_minute or pozetron.last_refreshed_scripts is None:
+                try:
+                    refresh_scripts()
+                    pozetron.last_refreshed_scripts = now
+                    flush_logs()
+                except SignatureException as ex:
+                    raise ex
+                except RequestError:
+                    pass
+        except SignatureException:
+            # Try to set the time through NTP, but not too hard
+            try:
+                import ntptime
+                ntptime.settime()
+            except:
+                pass
+            finally:
+                ntptime = None
+                del(ntptime)
+        else:
+            break
+
+
+# Wrapper for make_validated_request, for brevity
+def request(url, **kw):
+    result = make_validated_request(url, KEY_ID, HMAC_SECRET, debug=debug, **kw)
+    # Successful request -> we can disable backoff
+    reset_backoff()
+    return result
+
+
+# We must write "Failure sending logs..." message only once
+# until the next flush_logs success
+_logs_lost = False
 
 
 # This function does not raise
 def flush_logs():
+    if check_backoff():
+        return
     import logger
+    global _logs_lost
+    url = API_BASE + '/logs/'
     try:
+        # If log is empty, then we don't have to flush anything
         if not logger.file_size:
             logs = logger._logs
             if len(logs) == 0:
                 return
         else:
-            import uos
             try:
-                if uos.stat(logger._LOG_FILE)[6] == 0:  # size == 0
+                if os.stat(logger._LOG_FILE)[6] == 0:  # size == 0
                     return
             except OSError:  # No file = no logs = no problem
                 return
-            finally:
-                del uos
+        # Post logs to API
         try:
             try:
+                # NOTE: when API is available again after failure, this will not execute
+                # if log is empty, until some other message is logged.
+                if _logs_lost:
+                    request(url, method='POST', json=[{'text': 'Failure sending logs, truncated logs have been lost'}])
+                    _logs_lost = False
                 # TODO: In the future, find a way to compute the HMAC on the file rather piece by piece than after
                 # loading the list to memory.
                 if not logger.file_size:
                     json = [{'text': x} for x in logger._logs]
                     if logger._overflow_errors:
                         json.append({'text': '{} failed writes to log file due to logger.file_size={}'.format(logger._overflow_errors, logger.file_size)})
-                    make_validated_request(API_BASE + '/logs/', KEY_ID, HMAC_SECRET,
-                                                   method='POST', json=json, debug=pozetron.debug)
+                    request(url, method='POST', json=json)
                     del json
                 else:
                     # If there are overflow errors we send them separately to make sure they get there.
                     if logger._overflow_errors:
                         json = [{'text': '{} failed writes to log file due to logger.file_size={}'.format(logger._overflow_errors, logger.file_size)}]
-                        make_validated_request(API_BASE + '/logs/', KEY_ID, HMAC_SECRET,
-                                                           method='POST', json=json, debug=pozetron.debug)
+                        request(url, method='POST', json=json)
                         del json
                         logger._overflow_errors = 0
                     # If there were no overflow errors we just send the log file.
-                    make_validated_request(API_BASE + '/logs/', KEY_ID, HMAC_SECRET,
-                                                   method='POST', debug=pozetron.debug, in_file=logger._LOG_FILE)
+                    request(url, method='POST', in_file=logger._LOG_FILE)
                 # Success - clear logs
                 logger._overflow_errors = 0
                 logger._send_fails = 0
                 if not logger.file_size:
                     logger._logs.clear()
-                else:  # no truncate() so we use a workaround
-                    with open(logger._LOG_FILE, 'w') as logfile:
-                        logfile.write('')
+                else:
+                    _truncate_file(logger._LOG_FILE)
             except RequestError as ex:
-                try:
-                    import ujson
-                    import uos
-                    if len(ex.args) > 3 and ujson.loads(ex.args[2])['detail'].startswith('JSON parse error'):
-                        with open(logger._LOG_FILE, 'rb') as logfile:
-                            for byte in logfile:
-                                if byte == '\00' or '\FF':
-                                    corrupt = True
-                                    break
-                            if corrupt:
-                                    with open(logger._LOG_FILE, 'rb') as logfile:
-                                        with open(logger._LOG_FILE+'.temp', 'wb') as temp_logfile:
-                                            for byte in logfile:
-                                                if not (byte == '\00' or '\FF'):
-                                                    temp_logfile.wrtie(byte)
-                                    uos.rename(logger._LOG_FILE+'.temp', logger._LOG_FILE)
-                    raise ex  # see outer `except` below
-                finally:
-                    del(ujson)
-                    del(uos)
+                # NOTE: API will accept logs even if they are corrupted
+                print(ex)
+                set_backoff()
+                raise ex
             #finally:
-                ## Make sure file is closed
-                #if logger.file_size:
-                    #logs.close()
                 # Delete variable
                 # The follow call to del causes:
                 # MemoryError: memory allocation failed, allocating 1073672184 bytes
                 #del logs
         except Exception as ex:
-            #sys.print_exception(ex)
             log(exc_logline.format('send logs', ex))
             logger._send_fails += 1
         # If too many fails, reset log
         if logger._send_fails >= 3:
             clear_logs()
-            log('Failure sending logs, truncated logs have been lost')
+            _logs_lost = True
     except Exception as o:
         sys.print_exception(o)
     finally:
+        del url
         del logger
+
+
+# No truncate() so we use a workaround.
+# Don't physically write if file is already empty, to save flash.
+def _truncate_file(filename):
+    try:
+        if os.stat(filename)[6] > 0:
+            with open(filename, 'w'):
+                pass
+    except OSError:
+        pass
 
 
 def clear_logs():
@@ -177,10 +185,52 @@ def clear_logs():
     logger._overflow_errors = 0
     logger._send_fails = 0
     logger._logs.clear()
-    if logger.file_size:
-        with open(logger._LOG_FILE, 'w'):
-            pass
+    _truncate_file(logger._LOG_FILE)
     del logger
+
+
+# Exponential backoff: don't do requests to API for some time,
+# increasing that time after every subsequent failure.
+_backoff_until = None
+_backoff_factor = 0
+_backoff_factor_max = 7  # max wait depends on this and on timeout below
+_backoff_timeout_ms = const(10000)  # max wait is about 20 minutes
+
+
+def set_backoff(timeout=None):
+    global _backoff_until, _backoff_factor
+    if not timeout:
+        # We randomize backoff period by 25% to avoid "thundering herd" problem
+        import urandom
+        timeout = (_backoff_timeout_ms * 2**_backoff_factor) * (1024 + (256 - urandom.getrandbits(9))) // 1024
+        del urandom
+        # Increase backoff factor
+        _backoff_factor = min(_backoff_factor + 1, _backoff_factor_max)
+    # next try at (now + timeout)
+    _backoff_until = utime.ticks_add(utime.ticks_ms(), timeout)
+
+
+# Return True if backoff is in effect and we should come later
+def check_backoff():
+    global _backoff_until
+    if _backoff_until is None:
+        return False
+    diff = utime.ticks_diff(_backoff_until, utime.ticks_ms())
+    # Check for wrap around
+    if not (-one_day < diff < one_day):
+        diff = 0
+    # Are we still waiting?
+    if diff > 0:
+        return True
+    # Reset wait, but don't reset factor. Factor is reset on first successful request.
+    _backoff_until = None
+    return False
+
+
+# Reset back-off mechanism after successful request.
+def reset_backoff():
+    global _backoff_factor
+    _backoff_factor = 0
 
 
 def makesubdir(path, subdir):
@@ -209,10 +259,13 @@ def autocollect(function):
 def post_checkin():
     # Returns True if checkin is successful, False otherwise.
     global _on_startup_checkin_done
+    if check_backoff():
+        return False
     try:
-        make_validated_request(API_BASE + '/checkin/', method='POST', key_id=KEY_ID, secret=HMAC_SECRET, data=' ', debug=pozetron.debug)
+        request(API_BASE + '/checkin/', method='POST', data=' ')
     except RequestError as ex:
-        log(exc_logline.format('post checkin', ex))
+        print(exc_logline.format('post checkin', ex))
+        set_backoff()
         return False
     _on_startup_checkin_done = True
     return True
@@ -239,7 +292,18 @@ def check_commands(debug=pozetron.debug):
     if not _on_startup_checkin_done:
         if not post_checkin():
             return
-    commands = make_validated_request(API_BASE + '/checkin/', key_id=KEY_ID, secret=HMAC_SECRET, debug=pozetron.debug)
+    if check_backoff():
+        return
+    try:
+        commands = request(API_BASE + '/checkin/')
+    # Because SignatureException is a type of RequestError we have to
+    # catch it here and raise it explicitly.
+    except SignatureException as ex:
+        raise ex
+    except RequestError as ex:
+        print(ex)
+        set_backoff()
+        return
     commands = commands.json()
     import logger
     try:
@@ -270,23 +334,21 @@ def check_commands(debug=pozetron.debug):
                     if logger._send_fails and (logger.file_size == 0 or new_size == 0):  # memory <-> file
                         clear_logs()
                         logger.file_size = new_size  # so that following line goes to new destination
-                        log('Failure sending logs, truncated logs have been lost')
+                        global _logs_lost
+                        _logs_lost = True
                 logger.file_size = new_size
                 del new_size
                 if logger._send_logs != old_send_logs:
                     log('Log mode enabled' if logger._send_logs else 'Log mode disabled')
+                # Save log mode to file, to be used on next reboot
+                _save_log_mode()
             elif command['type'] == 'reboot':
-                try:
-                    import utime
-                    # Make sure there is 1 second delay between forget-network and reboot
-                    if forget_network_time is not None:
-                        utime.sleep_ms(one_second - utime.ticks_diff(utime.ticks_ms(), forget_network_time))
-                    _reboot()
-                finally:
-                    del(utime)
+                # Make sure there is 1 second delay between forget-network and reboot
+                if forget_network_time is not None:
+                    utime.sleep_ms(one_second - utime.ticks_diff(utime.ticks_ms(), forget_network_time))
+                _reboot()
                 continue  # reboot is special, we send confirmation AFTER reboot
             elif command['type'] == 'forget_network' and forget_network_time is None:
-                import utime, machine
                 try:
                     os.remove('/network_config.py')
                     forget_network_time = utime.ticks_ms()
@@ -296,14 +358,12 @@ def check_commands(debug=pozetron.debug):
             else:
                 error = 'Unknown command'
             # Confirm command execution
-            make_validated_request(API_BASE + '/command/', key_id=KEY_ID, secret=HMAC_SECRET,
-                                   method='POST',
-                                   json={
-                                       'command': command,
-                                       'success': error == '',
-                                       'error': error
-                                   },
-                                   debug=pozetron.debug)
+            request(API_BASE + '/command/', method='POST',
+                    json={
+                       'command': command,
+                       'success': error == '',
+                       'error': error
+                    })
     finally:
         del logger
 
@@ -347,13 +407,16 @@ def check_file_signature(in_file, signature, secret):
 
 @autocollect
 def refresh_scripts(debug=pozetron.debug):
+    if check_backoff():
+        return
     # Update local scripts according to latest info from the server.
     scripts_url = API_BASE + '/scripts/'
     # Get latest script list from the server
     try:
-        scripts = make_validated_request(scripts_url, key_id=KEY_ID, secret=HMAC_SECRET, debug=pozetron.debug).json()
+        scripts = request(scripts_url).json()
     except Exception as ex:
-        log(exc_logline.format('make request to refresh scripts', ex))
+        print(exc_logline.format('make request to refresh scripts', ex))
+        set_backoff()
         raise ex
     # Update local scripts and cache
     with ScriptStore() as script_store:
@@ -366,16 +429,12 @@ def refresh_scripts(debug=pozetron.debug):
         subdirs = set()  # created or existing subdirs (this is for optimization)
         for script in update_list:
             try:
-                script_info = make_validated_request(scripts_url + script['id'] + '/',
-                                                     key_id=KEY_ID,
-                                                     secret=HMAC_SECRET).json()
+                script_info = request(scripts_url + script['id'] + '/').json()
             except Exception as ex:
                 log(exc_logline.format('get script info', ex))
                 raise ex
             try:
-                script_secret = make_validated_request(scripts_url + script['id'] + '/secret/',
-                                                       key_id=KEY_ID,
-                                                       secret=HMAC_SECRET).json()['secret']
+                script_secret = request(scripts_url + script['id'] + '/secret/').json()['secret']
             except Exception as ex:
                 log(exc_logline.format('get script secret', ex))
                 raise ex
@@ -497,3 +556,56 @@ class ScriptStore:
             for key, value in self._cache.items():
                 # id, module_name, hash
                 file.write(','.join([key, value[0], value[1]]) + '\n')
+
+
+# Get log mode on reboot
+def get_log_mode():
+    import logger
+    try:
+        data = request(API_BASE + '/log-mode/').json()
+        logger._send_logs = data['enable']
+        if data['mode'] == 'file':
+            logger.file_size = data['file_size']
+        else:
+            logger.file_size = 0
+    except Exception as ex:
+        print('Failed to get log mode from API: {}'.format(ex))
+    del logger
+
+
+# Save current log mode to file, to be used on next restart.
+# Return True if file was changed
+def _save_log_mode():
+    import logger
+    log_file_size = 'LOG_FILE_SIZE = {!r}\n'.format(logger.file_size)
+    log_send = 'LOG_SEND = {!r}\n'.format(logger._send_logs)
+    del logger
+    changed = False
+    with open('/pozetron_config.py', 'r') as file:
+        lines = file.readlines()
+    # Replace existing lines
+    for i in range(len(lines)):
+        if lines[i].startswith('LOG_FILE_SIZE'):
+            if lines[i] != log_file_size:
+                lines[i] = log_file_size
+                changed = True
+            log_file_size = None
+        elif lines[i].startswith('LOG_SEND'):
+            if lines[i] != log_send:
+                lines[i] = log_send
+                changed = True
+            log_send = None
+    # Add new lines
+    if log_file_size:
+        lines.append(log_file_size)
+        changed = True
+    if log_send:
+        lines.append(log_send)
+        changed = True
+    # Rewrite file only if changed
+    if changed:
+        with open('/pozetron_config.py', 'w') as file:
+            for line in lines:
+                file.write(line)
+    del log_file_size, log_send
+    return changed
