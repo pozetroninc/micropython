@@ -28,6 +28,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -35,6 +36,7 @@
 #include "nvs_flash.h"
 #include "esp_task.h"
 #include "soc/cpu.h"
+#include "esp_log.h"
 
 #include "py/stackctrl.h"
 #include "py/nlr.h"
@@ -47,17 +49,21 @@
 #include "lib/utils/pyexec.h"
 #include "uart.h"
 #include "modmachine.h"
+#include "modnetwork.h"
 #include "mpthreadport.h"
 
 // MicroPython runs as a task under FreeRTOS
 #define MP_TASK_PRIORITY        (ESP_TASK_PRIO_MIN + 1)
 #define MP_TASK_STACK_SIZE      (16 * 1024)
 #define MP_TASK_STACK_LEN       (MP_TASK_STACK_SIZE / sizeof(StackType_t))
-#define MP_TASK_HEAP_SIZE       (96 * 1024)
 
 STATIC StaticTask_t mp_task_tcb;
 STATIC StackType_t mp_task_stack[MP_TASK_STACK_LEN] __attribute__((aligned (8)));
-STATIC uint8_t mp_task_heap[MP_TASK_HEAP_SIZE];
+
+int vprintf_null(const char *format, va_list ap) {
+    // do nothing: this is used as a log target during raw repl mode
+    return 0;
+}
 
 void mp_task(void *pvParameter) {
     volatile uint32_t sp = (uint32_t)get_sp();
@@ -66,11 +72,15 @@ void mp_task(void *pvParameter) {
     #endif
     uart_init();
 
+    // Allocate the uPy heap using malloc and get the largest available region
+    size_t mp_task_heap_size = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    void *mp_task_heap = malloc(mp_task_heap_size);
+
 soft_reset:
     // initialise the stack pointer for the main thread
     mp_stack_set_top((void *)sp);
     mp_stack_set_limit(MP_TASK_STACK_SIZE - 1024);
-    gc_init(mp_task_heap, mp_task_heap + sizeof(mp_task_heap));
+    gc_init(mp_task_heap, mp_task_heap + mp_task_heap_size);
     mp_init();
     mp_obj_list_init(mp_sys_path, 0);
     mp_obj_list_append(mp_sys_path, MP_OBJ_NEW_QSTR(MP_QSTR_));
@@ -90,9 +100,11 @@ soft_reset:
 
     for (;;) {
         if (pyexec_mode_kind == PYEXEC_MODE_RAW_REPL) {
+            vprintf_like_t vprintf_log = esp_log_set_vprintf(vprintf_null);
             if (pyexec_raw_repl() != 0) {
                 break;
             }
+            esp_log_set_vprintf(vprintf_log);
         } else {
             if (pyexec_friendly_repl() != 0) {
                 break;
@@ -104,10 +116,13 @@ soft_reset:
     mp_thread_deinit();
     #endif
 
+    gc_sweep_all();
+
     mp_hal_stdout_tx_str("PYB: soft reboot\r\n");
 
     // deinitialise peripherals
     machine_pins_deinit();
+    usocket_events_deinit();
 
     mp_deinit();
     fflush(stdout);
@@ -116,8 +131,8 @@ soft_reset:
 
 void app_main(void) {
     nvs_flash_init();
-    xTaskCreateStaticPinnedToCore(mp_task, "mp_task", MP_TASK_STACK_LEN, NULL, MP_TASK_PRIORITY,
-                                  &mp_task_stack[0], &mp_task_tcb, 0);
+    mp_main_task_handle = xTaskCreateStaticPinnedToCore(mp_task, "mp_task", MP_TASK_STACK_LEN, NULL, MP_TASK_PRIORITY,
+                                                        &mp_task_stack[0], &mp_task_tcb, 0);
 }
 
 void nlr_jump_fail(void *val) {

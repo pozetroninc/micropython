@@ -55,7 +55,10 @@ mp_raw_code_t *mp_emit_glue_new_raw_code(void) {
     return rc;
 }
 
-void mp_emit_glue_assign_bytecode(mp_raw_code_t *rc, const byte *code, mp_uint_t len,
+void mp_emit_glue_assign_bytecode(mp_raw_code_t *rc, const byte *code,
+    #if MICROPY_PERSISTENT_CODE_SAVE || MICROPY_DEBUG_PRINTERS
+    size_t len,
+    #endif
     const mp_uint_t *const_table,
     #if MICROPY_PERSISTENT_CODE_SAVE
     uint16_t n_obj, uint16_t n_raw_code,
@@ -143,12 +146,11 @@ mp_obj_t mp_make_function_from_raw_code(const mp_raw_code_t *rc, mp_obj_t def_ar
             // rc->kind should always be set and BYTECODE is the only remaining case
             assert(rc->kind == MP_CODE_BYTECODE);
             fun = mp_obj_new_fun_bc(def_args, def_kw_args, rc->data.u_byte.bytecode, rc->data.u_byte.const_table);
+            // check for generator functions and if so change the type of the object
+            if ((rc->scope_flags & MP_SCOPE_FLAG_GENERATOR) != 0) {
+                ((mp_obj_base_t*)MP_OBJ_TO_PTR(fun))->type = &mp_type_gen_wrap;
+            }
             break;
-    }
-
-    // check for generator functions and if so wrap in generator object
-    if ((rc->scope_flags & MP_SCOPE_FLAG_GENERATOR) != 0) {
-        fun = mp_obj_new_gen_wrap(fun);
     }
 
     return fun;

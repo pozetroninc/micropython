@@ -88,7 +88,7 @@ typedef uint32_t mp_float_uint_t;
         if (adj_exp <= MP_FLOAT_FRAC_BITS) {
             // number may have a fraction; xor the integer part with the fractional part
             val = (frc >> (MP_FLOAT_FRAC_BITS - adj_exp))
-                ^ (frc & ((1 << (MP_FLOAT_FRAC_BITS - adj_exp)) - 1));
+                ^ (frc & (((mp_float_uint_t)1 << (MP_FLOAT_FRAC_BITS - adj_exp)) - 1));
         } else if ((unsigned int)adj_exp < BITS_PER_BYTE * sizeof(mp_int_t) - 1) {
             // the number is a (big) whole integer and will fit in val's signed-width
             val = (mp_int_t)frc << (adj_exp - MP_FLOAT_FRAC_BITS);
@@ -99,7 +99,7 @@ typedef uint32_t mp_float_uint_t;
     }
 
     if (u.p.sgn) {
-        val = -val;
+        val = -(mp_uint_t)val;
     }
 
     return val;
@@ -293,7 +293,7 @@ mp_obj_t mp_obj_float_binary_op(mp_binary_op_t op, mp_float_t lhs_val, mp_obj_t 
             break;
         case MP_BINARY_OP_POWER:
         case MP_BINARY_OP_INPLACE_POWER:
-            if (lhs_val == 0 && rhs_val < 0) {
+            if (lhs_val == 0 && rhs_val < 0 && !isinf(rhs_val)) {
                 goto zero_division_error;
             }
             if (lhs_val < 0 && rhs_val != MICROPY_FLOAT_C_FUN(floor)(rhs_val)) {

@@ -23,8 +23,8 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#ifndef MICROPY_INCLUDED_STMHAL_USB_H
-#define MICROPY_INCLUDED_STMHAL_USB_H
+#ifndef MICROPY_INCLUDED_STM32_USB_H
+#define MICROPY_INCLUDED_STM32_USB_H
 
 #include "usbd_cdc_msc_hid0.h"
 
@@ -35,6 +35,8 @@
 #define USBD_PID_CDC_MSC (0x9800)
 #define USBD_PID_CDC_HID (0x9801)
 #define USBD_PID_CDC     (0x9802)
+#define USBD_PID_MSC     (0x9803)
+#define USBD_PID_CDC2_MSC (0x9804)
 
 typedef enum {
     PYB_USB_STORAGE_MEDIUM_NONE = 0,
@@ -49,8 +51,8 @@ typedef enum {
 
 extern mp_uint_t pyb_usb_flags;
 extern pyb_usb_storage_medium_t pyb_usb_storage_medium;
-extern const struct _mp_obj_tuple_t pyb_usb_hid_mouse_obj;
-extern const struct _mp_obj_tuple_t pyb_usb_hid_keyboard_obj;
+extern const struct _mp_rom_obj_tuple_t pyb_usb_hid_mouse_obj;
+extern const struct _mp_rom_obj_tuple_t pyb_usb_hid_keyboard_obj;
 extern const mp_obj_type_t pyb_usb_vcp_type;
 extern const mp_obj_type_t pyb_usb_hid_type;
 MP_DECLARE_CONST_FUN_OBJ_KW(pyb_usb_mode_obj);
@@ -68,4 +70,4 @@ void pyb_usb_host_init(void);
 void pyb_usb_host_process(void);
 uint pyb_usb_host_get_keyboard(void);
 
-#endif // MICROPY_INCLUDED_STMHAL_USB_H
+#endif // MICROPY_INCLUDED_STM32_USB_H

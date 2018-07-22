@@ -33,7 +33,6 @@
 #if MICROPY_HW_HAS_LCD
 
 #include "pin.h"
-#include "genhdr/pins.h"
 #include "bufhelper.h"
 #include "spi.h"
 #include "font_petme128_8x8.h"
@@ -89,7 +88,7 @@ typedef struct _pyb_lcd_obj_t {
     mp_obj_base_t base;
 
     // hardware control for the LCD
-    SPI_HandleTypeDef *spi;
+    const spi_t *spi;
     const pin_obj_t *pin_cs1;
     const pin_obj_t *pin_rst;
     const pin_obj_t *pin_a0;
@@ -119,7 +118,7 @@ STATIC void lcd_out(pyb_lcd_obj_t *lcd, int instr_data, uint8_t i) {
         mp_hal_pin_high(lcd->pin_a0); // A0=1; select data reg
     }
     lcd_delay();
-    HAL_SPI_Transmit(lcd->spi, &i, 1, 1000);
+    HAL_SPI_Transmit(lcd->spi->spi, &i, 1, 1000);
     lcd_delay();
     mp_hal_pin_high(lcd->pin_cs1); // CS=1; disable
 }
@@ -207,29 +206,29 @@ STATIC mp_obj_t pyb_lcd_make_new(const mp_obj_type_t *type, size_t n_args, size_
     // configure pins
     // TODO accept an SPI object and pin objects for full customisation
     if ((lcd_id[0] | 0x20) == 'x' && lcd_id[1] == '\0') {
-        lcd->spi = &SPIHandle1;
-        lcd->pin_cs1 = &pyb_pin_X3;
-        lcd->pin_rst = &pyb_pin_X4;
-        lcd->pin_a0 = &pyb_pin_X5;
-        lcd->pin_bl = &pyb_pin_X12;
+        lcd->spi = &spi_obj[0];
+        lcd->pin_cs1 = pyb_pin_X3;
+        lcd->pin_rst = pyb_pin_X4;
+        lcd->pin_a0 = pyb_pin_X5;
+        lcd->pin_bl = pyb_pin_X12;
     } else if ((lcd_id[0] | 0x20) == 'y' && lcd_id[1] == '\0') {
-        lcd->spi = &SPIHandle2;
-        lcd->pin_cs1 = &pyb_pin_Y3;
-        lcd->pin_rst = &pyb_pin_Y4;
-        lcd->pin_a0 = &pyb_pin_Y5;
-        lcd->pin_bl = &pyb_pin_Y12;
+        lcd->spi = &spi_obj[1];
+        lcd->pin_cs1 = pyb_pin_Y3;
+        lcd->pin_rst = pyb_pin_Y4;
+        lcd->pin_a0 = pyb_pin_Y5;
+        lcd->pin_bl = pyb_pin_Y12;
     } else {
         nlr_raise(mp_obj_new_exception_msg_varg(&mp_type_ValueError, "LCD(%s) doesn't exist", lcd_id));
     }
 
     // init the SPI bus
-    SPI_InitTypeDef *init = &lcd->spi->Init;
+    SPI_InitTypeDef *init = &lcd->spi->spi->Init;
     init->Mode = SPI_MODE_MASTER;
 
     // compute the baudrate prescaler from the desired baudrate
     // select a prescaler that yields at most the desired baudrate
     uint spi_clock;
-    if (lcd->spi->Instance == SPI1) {
+    if (lcd->spi->spi->Instance == SPI1) {
         // SPI1 is on APB2
         spi_clock = HAL_RCC_GetPCLK2Freq();
     } else {
@@ -308,7 +307,7 @@ STATIC mp_obj_t pyb_lcd_make_new(const mp_obj_type_t *type, size_t n_args, size_
     memset(lcd->pix_buf, 0, LCD_PIX_BUF_BYTE_SIZE);
     memset(lcd->pix_buf2, 0, LCD_PIX_BUF_BYTE_SIZE);
 
-    return lcd;
+    return MP_OBJ_FROM_PTR(lcd);
 }
 
 /// \method command(instr_data, buf)
@@ -317,7 +316,7 @@ STATIC mp_obj_t pyb_lcd_make_new(const mp_obj_type_t *type, size_t n_args, size_
 /// instruction, otherwise pass 1 to send data.  `buf` is a buffer with the
 /// instructions/data to send.
 STATIC mp_obj_t pyb_lcd_command(mp_obj_t self_in, mp_obj_t instr_data_in, mp_obj_t val) {
-    pyb_lcd_obj_t *self = self_in;
+    pyb_lcd_obj_t *self = MP_OBJ_TO_PTR(self_in);
 
     // get whether instr or data
     int instr_data = mp_obj_get_int(instr_data_in);
@@ -340,7 +339,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_3(pyb_lcd_command_obj, pyb_lcd_command);
 ///
 /// Set the contrast of the LCD.  Valid values are between 0 and 47.
 STATIC mp_obj_t pyb_lcd_contrast(mp_obj_t self_in, mp_obj_t contrast_in) {
-    pyb_lcd_obj_t *self = self_in;
+    pyb_lcd_obj_t *self = MP_OBJ_TO_PTR(self_in);
     int contrast = mp_obj_get_int(contrast_in);
     if (contrast < 0) {
         contrast = 0;
@@ -357,7 +356,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_2(pyb_lcd_contrast_obj, pyb_lcd_contrast);
 ///
 /// Turn the backlight on/off.  True or 1 turns it on, False or 0 turns it off.
 STATIC mp_obj_t pyb_lcd_light(mp_obj_t self_in, mp_obj_t value) {
-    pyb_lcd_obj_t *self = self_in;
+    pyb_lcd_obj_t *self = MP_OBJ_TO_PTR(self_in);
     if (mp_obj_is_true(value)) {
         mp_hal_pin_high(self->pin_bl); // set pin high to turn backlight on
     } else {
@@ -371,7 +370,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_2(pyb_lcd_light_obj, pyb_lcd_light);
 ///
 /// Write the string `str` to the screen.  It will appear immediately.
 STATIC mp_obj_t pyb_lcd_write(mp_obj_t self_in, mp_obj_t str) {
-    pyb_lcd_obj_t *self = self_in;
+    pyb_lcd_obj_t *self = MP_OBJ_TO_PTR(self_in);
     size_t len;
     const char *data = mp_obj_str_get_data(str, &len);
     lcd_write_strn(self, data, len);
@@ -385,7 +384,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_2(pyb_lcd_write_obj, pyb_lcd_write);
 ///
 /// This method writes to the hidden buffer.  Use `show()` to show the buffer.
 STATIC mp_obj_t pyb_lcd_fill(mp_obj_t self_in, mp_obj_t col_in) {
-    pyb_lcd_obj_t *self = self_in;
+    pyb_lcd_obj_t *self = MP_OBJ_TO_PTR(self_in);
     int col = mp_obj_get_int(col_in);
     if (col) {
         col = 0xff;
@@ -402,7 +401,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_2(pyb_lcd_fill_obj, pyb_lcd_fill);
 ///
 /// This method reads from the visible buffer.
 STATIC mp_obj_t pyb_lcd_get(mp_obj_t self_in, mp_obj_t x_in, mp_obj_t y_in) {
-    pyb_lcd_obj_t *self = self_in;
+    pyb_lcd_obj_t *self = MP_OBJ_TO_PTR(self_in);
     int x = mp_obj_get_int(x_in);
     int y = mp_obj_get_int(y_in);
     if (0 <= x && x <= 127 && 0 <= y && y <= 31) {
@@ -421,7 +420,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_3(pyb_lcd_get_obj, pyb_lcd_get);
 ///
 /// This method writes to the hidden buffer.  Use `show()` to show the buffer.
 STATIC mp_obj_t pyb_lcd_pixel(size_t n_args, const mp_obj_t *args) {
-    pyb_lcd_obj_t *self = args[0];
+    pyb_lcd_obj_t *self = MP_OBJ_TO_PTR(args[0]);
     int x = mp_obj_get_int(args[1]);
     int y = mp_obj_get_int(args[2]);
     if (0 <= x && x <= 127 && 0 <= y && y <= 31) {
@@ -443,7 +442,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(pyb_lcd_pixel_obj, 4, 4, pyb_lcd_pixe
 /// This method writes to the hidden buffer.  Use `show()` to show the buffer.
 STATIC mp_obj_t pyb_lcd_text(size_t n_args, const mp_obj_t *args) {
     // extract arguments
-    pyb_lcd_obj_t *self = args[0];
+    pyb_lcd_obj_t *self = MP_OBJ_TO_PTR(args[0]);
     size_t len;
     const char *data = mp_obj_str_get_data(args[1], &len);
     int x0 = mp_obj_get_int(args[2]);
@@ -489,7 +488,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(pyb_lcd_text_obj, 5, 5, pyb_lcd_text)
 ///
 /// Show the hidden buffer on the screen.
 STATIC mp_obj_t pyb_lcd_show(mp_obj_t self_in) {
-    pyb_lcd_obj_t *self = self_in;
+    pyb_lcd_obj_t *self = MP_OBJ_TO_PTR(self_in);
     memcpy(self->pix_buf, self->pix_buf2, LCD_PIX_BUF_BYTE_SIZE);
     for (uint page = 0; page < 4; page++) {
         lcd_out(self, LCD_INSTR, 0xb0 | page); // page address set

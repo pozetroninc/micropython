@@ -347,7 +347,7 @@
 #endif
 
 // Whether to enable optimisation of: a, b, c = d, e, f
-// Cost 156 bytes (Thumb2)
+// Requires MICROPY_COMP_DOUBLE_TUPLE_ASSIGN and costs 68 bytes (Thumb2)
 #ifndef MICROPY_COMP_TRIPLE_TUPLE_ASSIGN
 #define MICROPY_COMP_TRIPLE_TUPLE_ASSIGN (0)
 #endif
@@ -404,6 +404,13 @@
 
 /*****************************************************************************/
 /* Python internal features                                                  */
+
+// Whether to enable import of external modules
+// When disabled, only importing of built-in modules is supported
+// When enabled, a port must implement mp_import_stat (among other things)
+#ifndef MICROPY_ENABLE_EXTERNAL_IMPORT
+#define MICROPY_ENABLE_EXTERNAL_IMPORT (1)
+#endif
 
 // Whether to use the POSIX reader for importing files
 #ifndef MICROPY_READER_POSIX
@@ -674,6 +681,16 @@ typedef double mp_float_t;
 #define MICROPY_VFS (0)
 #endif
 
+// Support for VFS POSIX component, to mount a POSIX filesystem within VFS
+#ifndef MICROPY_VFS
+#define MICROPY_VFS_POSIX (0)
+#endif
+
+// Support for VFS FAT component, to mount a FAT filesystem within VFS
+#ifndef MICROPY_VFS
+#define MICROPY_VFS_FAT (0)
+#endif
+
 /*****************************************************************************/
 /* Fine control over Python builtins, classes, modules, etc                  */
 
@@ -689,14 +706,16 @@ typedef double mp_float_t;
 #define MICROPY_PY_FUNCTION_ATTRS (0)
 #endif
 
-// Whether to support descriptors (__get__ and __set__)
-// This costs some code size and makes all load attrs and store attrs slow
+// Whether to support the descriptors __get__, __set__, __delete__
+// This costs some code size and makes load/store/delete of instance
+// attributes slower for the classes that use this feature
 #ifndef MICROPY_PY_DESCRIPTORS
 #define MICROPY_PY_DESCRIPTORS (0)
 #endif
 
 // Whether to support class __delattr__ and __setattr__ methods
-// This costs some code size and makes all del attrs and store attrs slow
+// This costs some code size and makes store/delete of instance
+// attributes slower for the classes that use this feature
 #ifndef MICROPY_PY_DELATTR_SETATTR
 #define MICROPY_PY_DELATTR_SETATTR (0)
 #endif
@@ -785,6 +804,19 @@ typedef double mp_float_t;
 // the "range" builtin type. Rarely used, and costs ~60 bytes (x86).
 #ifndef MICROPY_PY_BUILTINS_RANGE_ATTRS
 #define MICROPY_PY_BUILTINS_RANGE_ATTRS (1)
+#endif
+
+// Whether to support binary ops [only (in)equality is defined] between range
+// objects.  With this option disabled all range objects that are not exactly
+// the same object will compare as not-equal.  With it enabled the semantics
+// match CPython and ranges are equal if they yield the same sequence of items.
+#ifndef MICROPY_PY_BUILTINS_RANGE_BINOP
+#define MICROPY_PY_BUILTINS_RANGE_BINOP (0)
+#endif
+
+// Whether to support rounding of integers (incl bignum); eg round(123,-1)=120
+#ifndef MICROPY_PY_BUILTINS_ROUND_INT
+#define MICROPY_PY_BUILTINS_ROUND_INT (0)
 #endif
 
 // Whether to support timeout exceptions (like socket.timeout)
@@ -892,6 +924,11 @@ typedef double mp_float_t;
 #define MICROPY_PY_MICROPYTHON_MEM_INFO (0)
 #endif
 
+// Whether to provide "micropython.stack_use" function
+#ifndef MICROPY_PY_MICROPYTHON_STACK_USE
+#define MICROPY_PY_MICROPYTHON_STACK_USE (MICROPY_PY_MICROPYTHON_MEM_INFO)
+#endif
+
 // Whether to provide "array" module. Note that large chunk of the
 // underlying code is shared with "bytearray" builtin type, so to
 // get real savings, it should be disabled too.
@@ -914,6 +951,11 @@ typedef double mp_float_t;
 // Whether to provide "collections" module
 #ifndef MICROPY_PY_COLLECTIONS
 #define MICROPY_PY_COLLECTIONS (1)
+#endif
+
+// Whether to provide "ucollections.deque" type
+#ifndef MICROPY_PY_COLLECTIONS_DEQUE
+#define MICROPY_PY_COLLECTIONS_DEQUE (0)
 #endif
 
 // Whether to provide "collections.OrderedDict" type
@@ -954,6 +996,11 @@ typedef double mp_float_t;
 // Whether to provide "io" module
 #ifndef MICROPY_PY_IO
 #define MICROPY_PY_IO (1)
+#endif
+
+// Whether to provide "io.IOBase" class to support user streams
+#ifndef MICROPY_PY_IO_IOBASE
+#define MICROPY_PY_IO_IOBASE (0)
 #endif
 
 // Whether to provide "uio.resource_stream()" function with
@@ -1095,6 +1142,18 @@ typedef double mp_float_t;
 #define MICROPY_PY_URE (0)
 #endif
 
+#ifndef MICROPY_PY_URE_MATCH_GROUPS
+#define MICROPY_PY_URE_MATCH_GROUPS (0)
+#endif
+
+#ifndef MICROPY_PY_URE_MATCH_SPAN_START_END
+#define MICROPY_PY_URE_MATCH_SPAN_START_END (0)
+#endif
+
+#ifndef MICROPY_PY_URE_SUB
+#define MICROPY_PY_URE_SUB (0)
+#endif
+
 #ifndef MICROPY_PY_UHEAPQ
 #define MICROPY_PY_UHEAPQ (0)
 #endif
@@ -1106,6 +1165,22 @@ typedef double mp_float_t;
 
 #ifndef MICROPY_PY_UHASHLIB
 #define MICROPY_PY_UHASHLIB (0)
+#endif
+
+#ifndef MICROPY_PY_UHASHLIB_SHA1
+#define MICROPY_PY_UHASHLIB_SHA1  (0)
+#endif
+
+#ifndef MICROPY_PY_UHASHLIB_SHA256
+#define MICROPY_PY_UHASHLIB_SHA256 (1)
+#endif
+
+#ifndef MICROPY_PY_UCRYPTOLIB
+#define MICROPY_PY_UCRYPTOLIB (0)
+#endif
+
+#ifndef MICROPY_PY_UCRYPTOLIB_CONSTS
+#define MICROPY_PY_UCRYPTOLIB_CONSTS (0)
 #endif
 
 #ifndef MICROPY_PY_UBINASCII
@@ -1231,28 +1306,25 @@ typedef double mp_float_t;
 #elif defined(MP_ENDIANNESS_BIG)
 #define MP_ENDIANNESS_LITTLE (!MP_ENDIANNESS_BIG)
 #else
-  // Endiannes not defined by port so try to autodetect it.
+  // Endianness not defined by port so try to autodetect it.
   #if defined(__BYTE_ORDER__)
     #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
       #define MP_ENDIANNESS_LITTLE (1)
-    #else
+    #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
       #define MP_ENDIANNESS_LITTLE (0)
     #endif
-  #elif defined(__LITTLE_ENDIAN__) || defined(__LITTLE_ENDIAN) || defined (_LITTLE_ENDIAN)
-    #define MP_ENDIANNESS_LITTLE (1)
-  #elif defined(__BIG_ENDIAN__) || defined(__BIG_ENDIAN) || defined (_BIG_ENDIAN)
-    #define MP_ENDIANNESS_LITTLE (0)
   #else
     #include <endian.h>
       #if defined(__BYTE_ORDER)
         #if __BYTE_ORDER == __LITTLE_ENDIAN
           #define MP_ENDIANNESS_LITTLE (1)
-        #else
+        #elif __BYTE_ORDER == __BIG_ENDIAN
           #define MP_ENDIANNESS_LITTLE (0)
         #endif
-      #else
-        #error endianness not defined and cannot detect it
       #endif
+  #endif
+  #ifndef MP_ENDIANNESS_LITTLE
+    #error endianness not defined and cannot detect it
   #endif
   #define MP_ENDIANNESS_BIG (!MP_ENDIANNESS_LITTLE)
 #endif

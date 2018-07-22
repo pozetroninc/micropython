@@ -83,6 +83,7 @@
 #define MICROPY_PY_SYS_MAXSIZE      (1)
 #define MICROPY_PY_SYS_STDFILES     (1)
 #define MICROPY_PY_SYS_EXC_INFO     (1)
+#define MICROPY_PY_COLLECTIONS_DEQUE (1)
 #define MICROPY_PY_COLLECTIONS_ORDEREDDICT (1)
 #define MICROPY_PY_MATH_SPECIAL_FUNCTIONS (1)
 #define MICROPY_PY_CMATH            (1)
@@ -120,6 +121,7 @@ extern const struct _mp_print_t mp_stderr_print;
 
 #ifdef _MSC_VER
 #define MICROPY_GCREGS_SETJMP       (1)
+#define MICROPY_USE_INTERNAL_PRINTF (0)
 #endif
 
 #define MICROPY_ENABLE_EMERGENCY_EXCEPTION_BUF   (1)
