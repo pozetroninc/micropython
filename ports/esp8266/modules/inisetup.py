@@ -1,4 +1,5 @@
 import uos
+import network
 from flashbdev import bdev
 import gc
 
@@ -36,7 +37,6 @@ def setup():
         f.write("""\
 import gc
 # This is required to disable the default MicroPython AP aka "ESP-XXXXXX"
-import network
 ap = network.WLAN(network.AP_IF)
 ap.active(False)
 del(network)
@@ -47,7 +47,7 @@ gc.collect()
     try:
         config_string = """\
 SCRIPTS_DIR = '/scripts/'
-API_BASE = 'http://api.pozetron.com/device/v1'
+API_BASE = 'https://api.pozetron.com/device/v1'
 CACHE_FILE_NAME = '/scripts/.scripts_cache'
 """
         with open('/pozetron_config.py', 'w') as config_file:

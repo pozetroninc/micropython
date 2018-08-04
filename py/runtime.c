@@ -108,7 +108,6 @@ void mp_init(void) {
     for (size_t i = 0; i < MICROPY_PY_OS_DUPTERM; ++i) {
         MP_STATE_VM(dupterm_objs[i]) = MP_OBJ_NULL;
     }
-    MP_STATE_VM(dupterm_arr_obj) = MP_OBJ_NULL;
     #endif
 
     #if MICROPY_FSUSERMOUNT
@@ -497,11 +496,11 @@ mp_obj_t mp_binary_op(mp_binary_op_t op, mp_obj_t lhs, mp_obj_t rhs) {
                 default:
                     goto unsupported_op;
             }
-            // TODO: We just should make mp_obj_new_int() inline and use that
+            // This is an inlined version of mp_obj_new_int, for speed
             if (MP_SMALL_INT_FITS(lhs_val)) {
                 return MP_OBJ_NEW_SMALL_INT(lhs_val);
             } else {
-                return mp_obj_new_int(lhs_val);
+                return mp_obj_new_int_from_ll(lhs_val);
             }
 #if MICROPY_PY_BUILTINS_FLOAT
         } else if (mp_obj_is_float(rhs)) {
@@ -1086,6 +1085,22 @@ void mp_load_method(mp_obj_t base, qstr attr, mp_obj_t *dest) {
     }
 }
 
+// Acts like mp_load_method_maybe but catches AttributeError, and all other exceptions if requested
+void mp_load_method_protected(mp_obj_t obj, qstr attr, mp_obj_t *dest, bool catch_all_exc) {
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        mp_load_method_maybe(obj, attr, dest);
+        nlr_pop();
+    } else {
+        if (!catch_all_exc
+            && !mp_obj_is_subclass_fast(MP_OBJ_FROM_PTR(((mp_obj_base_t*)nlr.ret_val)->type),
+                MP_OBJ_FROM_PTR(&mp_type_AttributeError))) {
+            // Re-raise the exception
+            nlr_raise(MP_OBJ_FROM_PTR(nlr.ret_val));
+        }
+    }
+}
+
 void mp_store_attr(mp_obj_t base, qstr attr, mp_obj_t value) {
     DEBUG_OP_printf("store attr %p.%s <- %p\n", base, qstr_str(attr), value);
     mp_obj_type_t *type = mp_obj_get_type(base);
@@ -1379,7 +1394,7 @@ void mp_import_all(mp_obj_t module) {
     DEBUG_printf("import all %p\n", module);
 
     // TODO: Support __all__
-    mp_map_t *map = mp_obj_dict_get_map(MP_OBJ_FROM_PTR(mp_obj_module_get_globals(module)));
+    mp_map_t *map = &mp_obj_module_get_globals(module)->map;
     for (size_t i = 0; i < map->alloc; i++) {
         if (MP_MAP_SLOT_IS_FILLED(map, i)) {
             qstr name = MP_OBJ_QSTR_VALUE(map->table[i].key);
