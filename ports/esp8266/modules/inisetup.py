@@ -33,14 +33,19 @@ def setup():
     uos.VfsFat.mkfs(bdev)
     vfs = uos.VfsFat(bdev)
     uos.mount(vfs, '/')
-    with open("/boot.py", "w") as f:
+    with open("boot.py", "w") as f:
         f.write("""\
-import gc
+#import gc
 # This is required to disable the default MicroPython AP aka "ESP-XXXXXX"
-ap = network.WLAN(network.AP_IF)
-ap.active(False)
-del(network)
-gc.collect()
+#import network
+#ap = network.WLAN(network.AP_IF)
+#ap.active(False)
+import esp
+esp.osdebug(None)
+import uos, machine
+uos.dupterm(machine.UART(0, 115200), 1)
+#del(network)
+#gc.collect()
 """)
 
     # The following writes the pozetron config to a file so it can later be overwritten if necessary.

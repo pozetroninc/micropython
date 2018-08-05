@@ -39,7 +39,7 @@ def setup():
     try:
         config_string = """\
 SCRIPTS_DIR = '/scripts/'
-API_BASE = 'http://api.pozetron.com/device/v1'
+API_BASE = 'https://api.pozetron.com/device/v1'
 CACHE_FILE_NAME = '/scripts/.scripts_cache'
 """
         with open('pozetron_config.py', 'w') as config_file:
