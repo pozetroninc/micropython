@@ -54,8 +54,22 @@ By default, the PCA10040 (nrf52832) is used as compile target. To build and flas
 Alternatively the target board could be defined:
 
      make BOARD=pca10040
-     make flash
-     
+     make BOARD=pca10040 flash
+
+## Compile without LTO enabled
+
+As a space optimization, LTO (Link Time Optimization) has been enabled on all
+targets in the nrf-port. The `-flto` linker flag can be toggled easily by using
+the argument LTO when building. The example below shows how to disable LTO for
+the compilation:
+
+    make BOARD=pca10040 LTO=0
+
+**Note**: There have been several issues with use of LTO in conjunction with
+GNU ARM Embedded Toolchain 7.2.1/4Q17. It's recommended to use a toolchain after
+this release, for example 7.3.1/2Q18 or 8.2.1/4Q18. The alternative would be to
+build the target using the LTO=0 as described above.
+ 
 ## Compile and Flash with Bluetooth Stack
 
 First prepare the bluetooth folder by downloading Bluetooth LE stacks and headers:
@@ -114,13 +128,7 @@ Install the necessary tools to flash and debug using Segger:
 
 [JLink Download](https://www.segger.com/downloads/jlink#)
 
-[nrfjprog linux-32bit Download](https://www.nordicsemi.com/eng/nordic/Products/nRF52840/nRF5x-Command-Line-Tools-Linux32/58857)
-
-[nrfjprog linux-64bit Download](https://www.nordicsemi.com/eng/nordic/Products/nRF52840/nRF5x-Command-Line-Tools-Linux64/58852)
-
-[nrfjprog osx Download](https://www.nordicsemi.com/eng/nordic/Products/nRF52840/nRF5x-Command-Line-Tools-OSX/58855)
-
-[nrfjprog win32 Download](https://www.nordicsemi.com/eng/nordic/Products/nRF52840/nRF5x-Command-Line-Tools-Win32/58850)
+[nrfjprog Download](https://www.nordicsemi.com/Software-and-Tools/Development-Tools/nRF5-Command-Line-Tools/Download#infotabs)
 
 note: On Linux it might be required to link SEGGER's `libjlinkarm.so` inside nrfjprog's folder.
 

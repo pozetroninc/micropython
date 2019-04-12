@@ -225,10 +225,12 @@ void asm_thumb_mov_reg_reg(asm_thumb_t *as, uint reg_dest, uint reg_src) {
 }
 
 // if loading lo half with movw, the i16 value will be zero extended into the r32 register!
-void asm_thumb_mov_reg_i16(asm_thumb_t *as, uint mov_op, uint reg_dest, int i16_src) {
+size_t asm_thumb_mov_reg_i16(asm_thumb_t *as, uint mov_op, uint reg_dest, int i16_src) {
     assert(reg_dest < ASM_THUMB_REG_R15);
+    size_t loc = mp_asm_base_get_code_pos(&as->base);
     // mov[wt] reg_dest, #i16_src
     asm_thumb_op32(as, mov_op | ((i16_src >> 1) & 0x0400) | ((i16_src >> 12) & 0xf), ((i16_src << 4) & 0x7000) | (reg_dest << 8) | (i16_src & 0xff));
+    return loc;
 }
 
 #define OP_B_N(byte_offset) (0xe000 | (((byte_offset) >> 1) & 0x07ff))
@@ -271,12 +273,16 @@ bool asm_thumb_bl_label(asm_thumb_t *as, uint label) {
     return as->base.pass != MP_ASM_PASS_EMIT || SIGNED_FIT23(rel);
 }
 
-void asm_thumb_mov_reg_i32(asm_thumb_t *as, uint reg_dest, mp_uint_t i32) {
+size_t asm_thumb_mov_reg_i32(asm_thumb_t *as, uint reg_dest, mp_uint_t i32) {
     // movw, movt does it in 8 bytes
     // ldr [pc, #], dw does it in 6 bytes, but we might not reach to end of code for dw
 
+    size_t loc = mp_asm_base_get_code_pos(&as->base);
+
     asm_thumb_mov_reg_i16(as, ASM_THUMB_OP_MOVW, reg_dest, i32);
     asm_thumb_mov_reg_i16(as, ASM_THUMB_OP_MOVT, reg_dest, i32 >> 16);
+
+    return loc;
 }
 
 void asm_thumb_mov_reg_i32_optimised(asm_thumb_t *as, uint reg_dest, int i32) {
@@ -381,9 +387,9 @@ void asm_thumb_bcc_label(asm_thumb_t *as, int cond, uint label) {
 #define OP_BLX(reg) (0x4780 | ((reg) << 3))
 #define OP_SVC(arg) (0xdf00 | (arg))
 
-void asm_thumb_bl_ind(asm_thumb_t *as, void *fun_ptr, uint fun_id, uint reg_temp) {
+void asm_thumb_bl_ind(asm_thumb_t *as, uint fun_id, uint reg_temp) {
     // Load ptr to function from table, indexed by fun_id, then call it
-    asm_thumb_ldr_reg_reg_i12_optimised(as, reg_temp, ASM_THUMB_REG_R7, fun_id);
+    asm_thumb_ldr_reg_reg_i12_optimised(as, reg_temp, ASM_THUMB_REG_FUN_TABLE, fun_id);
     asm_thumb_op16(as, OP_BLX(reg_temp));
 }
 

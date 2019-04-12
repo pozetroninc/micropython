@@ -47,6 +47,7 @@ Or:
 Then:
 
     pyb.enter_raw_repl()
+    pyb.exec('import pyb')
     pyb.exec('pyb.LED(1).on()')
     pyb.exit_raw_repl()
 
@@ -86,6 +87,7 @@ class PyboardError(Exception):
 
 class TelnetToSerial:
     def __init__(self, ip, user, password, read_timeout=None):
+        self.tn = None
         import telnetlib
         self.tn = telnetlib.Telnet(ip, timeout=15)
         self.read_timeout = read_timeout
@@ -109,11 +111,8 @@ class TelnetToSerial:
         self.close()
 
     def close(self):
-        try:
+        if self.tn:
             self.tn.close()
-        except:
-            # the telnet object might not exist yet, so ignore this one
-            pass
 
     def read(self, size=1):
         while len(self.fifo) < size:
