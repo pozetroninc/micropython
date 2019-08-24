@@ -47,6 +47,7 @@
 #include "py/mperrno.h"
 #include "lib/netutils/netutils.h"
 #include "tcpip_adapter.h"
+#include "mdns.h"
 #include "modnetwork.h"
 
 #include "lwip/sockets.h"
@@ -56,6 +57,8 @@
 #include "esp_log.h"
 
 #define SOCKET_POLL_US (100000)
+#define MDNS_QUERY_TIMEOUT_MS (5000)
+#define MDNS_LOCAL_SUFFIX ".local"
 
 typedef struct _socket_obj_t {
     mp_obj_base_t base;
@@ -150,6 +153,58 @@ static inline void check_for_exceptions(void) {
     mp_handle_pending();
 }
 
+// This function mimics lwip_getaddrinfo, with added support for mDNS queries
+static int _socket_getaddrinfo3(const char *nodename, const char *servname,
+    const struct addrinfo *hints, struct addrinfo **res) {
+
+    #if MICROPY_HW_ENABLE_MDNS_QUERIES
+    int nodename_len = strlen(nodename);
+    const int local_len = sizeof(MDNS_LOCAL_SUFFIX) - 1;
+    if (nodename_len > local_len
+        && strcasecmp(nodename + nodename_len - local_len, MDNS_LOCAL_SUFFIX) == 0) {
+        // mDNS query
+        char nodename_no_local[nodename_len - local_len + 1];
+        memcpy(nodename_no_local, nodename, nodename_len - local_len);
+        nodename_no_local[nodename_len - local_len] = '\0';
+
+        struct ip4_addr addr = {0};
+        esp_err_t err = mdns_query_a(nodename_no_local, MDNS_QUERY_TIMEOUT_MS, &addr);
+        if (err != ESP_OK) {
+            if (err == ESP_ERR_NOT_FOUND){
+                *res = NULL;
+                return 0;
+            }
+            *res = NULL;
+            return err;
+        }
+
+        struct addrinfo *ai = memp_malloc(MEMP_NETDB);
+        if (ai == NULL) {
+            *res = NULL;
+            return EAI_MEMORY;
+        }
+        memset(ai, 0, sizeof(struct addrinfo) + sizeof(struct sockaddr_storage));
+
+        struct sockaddr_in *sa = (struct sockaddr_in*)((uint8_t*)ai + sizeof(struct addrinfo));
+        inet_addr_from_ip4addr(&sa->sin_addr, &addr);
+        sa->sin_family = AF_INET;
+        sa->sin_len = sizeof(struct sockaddr_in);
+        sa->sin_port = lwip_htons((u16_t)atoi(servname));
+        ai->ai_family = AF_INET;
+        ai->ai_canonname = ((char*)sa + sizeof(struct sockaddr_storage));
+        memcpy(ai->ai_canonname, nodename, nodename_len + 1);
+        ai->ai_addrlen = sizeof(struct sockaddr_storage);
+        ai->ai_addr = (struct sockaddr*)sa;
+
+        *res = ai;
+        return 0;
+    }
+    #endif
+
+    // Normal query
+    return lwip_getaddrinfo(nodename, servname, hints, res);
+}
+
 static int _socket_getaddrinfo2(const mp_obj_t host, const mp_obj_t portx, struct addrinfo **resp) {
     const struct addrinfo hints = {
         .ai_family = AF_INET,
@@ -157,7 +212,7 @@ static int _socket_getaddrinfo2(const mp_obj_t host, const mp_obj_t portx, struc
     };
 
     mp_obj_t port = portx;
-    if (MP_OBJ_IS_SMALL_INT(port)) {
+    if (mp_obj_is_small_int(port)) {
         // This is perverse, because lwip_getaddrinfo promptly converts it back to an int, but
         // that's the API we have to work with ...
         port = mp_obj_str_binary_op(MP_BINARY_OP_MODULO, mp_obj_new_str_via_qstr("%s", 2), port);
@@ -172,18 +227,50 @@ static int _socket_getaddrinfo2(const mp_obj_t host, const mp_obj_t portx, struc
     }
 
     MP_THREAD_GIL_EXIT();
-    int res = lwip_getaddrinfo(host_str, port_str, &hints, resp);
+    int res = _socket_getaddrinfo3(host_str, port_str, &hints, resp);
     MP_THREAD_GIL_ENTER();
 
     return res;
 }
 
-int _socket_getaddrinfo(const mp_obj_t addrtuple, struct addrinfo **resp) {
-    mp_uint_t len = 0;
+STATIC void _socket_getaddrinfo(const mp_obj_t addrtuple, struct addrinfo **resp) {
     mp_obj_t *elem;
-    mp_obj_get_array(addrtuple, &len, &elem);
-    if (len != 2) return -1;
-    return _socket_getaddrinfo2(elem[0], elem[1], resp);
+    mp_obj_get_array_fixed_n(addrtuple, 2, &elem);
+    int res = _socket_getaddrinfo2(elem[0], elem[1], resp);
+    if (res != 0) {
+        mp_raise_OSError(res);
+    }
+    if (*resp == NULL) {
+        mp_raise_OSError(-2); // name or service not known
+    }
+}
+
+STATIC mp_obj_t socket_make_new(const mp_obj_type_t *type_in, size_t n_args, size_t n_kw, const mp_obj_t *args) {
+    mp_arg_check_num(n_args, n_kw, 0, 3, false);
+
+    socket_obj_t *sock = m_new_obj_with_finaliser(socket_obj_t);
+    sock->base.type = type_in;
+    sock->domain = AF_INET;
+    sock->type = SOCK_STREAM;
+    sock->proto = 0;
+    sock->peer_closed = false;
+    if (n_args > 0) {
+        sock->domain = mp_obj_get_int(args[0]);
+        if (n_args > 1) {
+            sock->type = mp_obj_get_int(args[1]);
+            if (n_args > 2) {
+                sock->proto = mp_obj_get_int(args[2]);
+            }
+        }
+    }
+
+    sock->fd = lwip_socket(sock->domain, sock->type, sock->proto);
+    if (sock->fd < 0) {
+        exception_from_errno(errno);
+    }
+    _socket_settimeout(sock, UINT64_MAX);
+
+    return MP_OBJ_FROM_PTR(sock);
 }
 
 STATIC mp_obj_t socket_bind(const mp_obj_t arg0, const mp_obj_t arg1) {
@@ -221,7 +308,13 @@ STATIC mp_obj_t socket_accept(const mp_obj_t arg0) {
         if (errno != EAGAIN) exception_from_errno(errno);
         check_for_exceptions();
     }
-    if (new_fd < 0) mp_raise_OSError(MP_ETIMEDOUT);
+    if (new_fd < 0) {
+        if (self->retries == 0) {
+            mp_raise_OSError(MP_EAGAIN);
+        } else {
+            mp_raise_OSError(MP_ETIMEDOUT);
+        }
+    }
 
     // create new socket object
     socket_obj_t *sock = m_new_obj_with_finaliser(socket_obj_t);
@@ -375,9 +468,24 @@ STATIC mp_uint_t _socket_read_data(mp_obj_t self_in, void *buf, size_t size,
 
     // XXX Would be nicer to use RTC to handle timeouts
     for (int i = 0; i <= sock->retries; ++i) {
-        MP_THREAD_GIL_EXIT();
+        // Poll the socket to see if it has waiting data and only release the GIL if it doesn't.
+        // This ensures higher performance in the case of many small reads, eg for readline.
+        bool release_gil;
+        {
+            fd_set rfds;
+            FD_ZERO(&rfds);
+            FD_SET(sock->fd, &rfds);
+            struct timeval timeout = { .tv_sec = 0, .tv_usec = 0 };
+            int r = select(sock->fd + 1, &rfds, NULL, NULL, &timeout);
+            release_gil = r != 1;
+        }
+        if (release_gil) {
+            MP_THREAD_GIL_EXIT();
+        }
         int r = lwip_recvfrom_r(sock->fd, buf, size, 0, from, from_len);
-        MP_THREAD_GIL_ENTER();
+        if (release_gil) {
+            MP_THREAD_GIL_ENTER();
+        }
         if (r == 0) {
             sock->peer_closed = true;
         }
@@ -447,9 +555,9 @@ int _socket_send(socket_obj_t *sock, const char *data, size_t datalen) {
 
 STATIC mp_obj_t socket_send(const mp_obj_t arg0, const mp_obj_t arg1) {
     socket_obj_t *sock = MP_OBJ_TO_PTR(arg0);
-    mp_uint_t datalen;
-    const char *data = mp_obj_str_get_data(arg1, &datalen);
-    int r = _socket_send(sock, data, datalen);
+    mp_buffer_info_t bufinfo;
+    mp_get_buffer_raise(arg1, &bufinfo, MP_BUFFER_READ);
+    int r = _socket_send(sock, bufinfo.buf, bufinfo.len);
     return mp_obj_new_int(r);
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_2(socket_send_obj, socket_send);
@@ -603,36 +711,10 @@ STATIC const mp_stream_p_t socket_stream_p = {
 STATIC const mp_obj_type_t socket_type = {
     { &mp_type_type },
     .name = MP_QSTR_socket,
+    .make_new = socket_make_new,
     .protocol = &socket_stream_p,
     .locals_dict = (mp_obj_t)&socket_locals_dict,
 };
-
-STATIC mp_obj_t get_socket(size_t n_args, const mp_obj_t *args) {
-    socket_obj_t *sock = m_new_obj_with_finaliser(socket_obj_t);
-    sock->base.type = &socket_type;
-    sock->domain = AF_INET;
-    sock->type = SOCK_STREAM;
-    sock->proto = 0;
-    sock->peer_closed = false;
-    if (n_args > 0) {
-        sock->domain = mp_obj_get_int(args[0]);
-        if (n_args > 1) {
-            sock->type = mp_obj_get_int(args[1]);
-            if (n_args > 2) {
-                sock->proto = mp_obj_get_int(args[2]);
-            }
-        }
-    }
-
-    sock->fd = lwip_socket(sock->domain, sock->type, sock->proto);
-    if (sock->fd < 0) {
-        exception_from_errno(errno);
-    }
-    _socket_settimeout(sock, UINT64_MAX);
-
-    return MP_OBJ_FROM_PTR(sock);
-}
-STATIC MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(get_socket_obj, 0, 3, get_socket);
 
 STATIC mp_obj_t esp_socket_getaddrinfo(size_t n_args, const mp_obj_t *args) {
     // TODO support additional args beyond the first two
@@ -684,7 +766,7 @@ STATIC MP_DEFINE_CONST_FUN_OBJ_0(esp_socket_initialize_obj, esp_socket_initializ
 STATIC const mp_rom_map_elem_t mp_module_socket_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_usocket) },
     { MP_ROM_QSTR(MP_QSTR___init__), MP_ROM_PTR(&esp_socket_initialize_obj) },
-    { MP_ROM_QSTR(MP_QSTR_socket), MP_ROM_PTR(&get_socket_obj) },
+    { MP_ROM_QSTR(MP_QSTR_socket), MP_ROM_PTR(&socket_type) },
     { MP_ROM_QSTR(MP_QSTR_getaddrinfo), MP_ROM_PTR(&esp_socket_getaddrinfo_obj) },
 
     { MP_ROM_QSTR(MP_QSTR_AF_INET), MP_ROM_INT(AF_INET) },

@@ -96,12 +96,13 @@ _logs_lost = False
 
 # This function does not raise
 def flush_logs():
-    if check_backoff():
-        return
-    import logger
     global _logs_lost
+    import logger
     url = API_BASE + '/logs/'
     try:
+        if should_backoff():
+            return
+
         # If log is empty, then we don't have to flush anything
         if not logger.file_size:
             logs = logger._logs
@@ -211,7 +212,7 @@ def set_backoff(timeout=None):
 
 
 # Return True if backoff is in effect and we should come later
-def check_backoff():
+def should_backoff():
     global _backoff_until
     if _backoff_until is None:
         return False
@@ -259,7 +260,7 @@ def autocollect(function):
 def post_checkin():
     # Returns True if checkin is successful, False otherwise.
     global _on_startup_checkin_done
-    if check_backoff():
+    if should_backoff():
         return False
     try:
         request(API_BASE + '/checkin/', method='POST', data=' ')
@@ -292,7 +293,7 @@ def check_commands(debug=pozetron.debug):
     if not _on_startup_checkin_done:
         if not post_checkin():
             return
-    if check_backoff():
+    if should_backoff():
         return
     try:
         commands = request(API_BASE + '/checkin/')
@@ -407,7 +408,7 @@ def check_file_signature(in_file, signature, secret):
 
 @autocollect
 def refresh_scripts(debug=pozetron.debug):
-    if check_backoff():
+    if should_backoff():
         return
     # Update local scripts according to latest info from the server.
     scripts_url = API_BASE + '/scripts/'
@@ -609,3 +610,19 @@ def _save_log_mode():
                 file.write(line)
     del log_file_size, log_send
     return changed
+
+
+#  Write whatever is passed in as data to the datalogger
+def datapoint(data):
+    try:
+        request(API_BASE + '/data/', method='POST', json=data)
+    except Exception as ex:
+        print('Unable to post data to datalogger: {}'.format(ex))
+
+
+#  Write whatever is passed in as data to the eventlogger
+def event(data):
+    try:
+        request(API_BASE + '/events/', method='POST', json=data)
+    except Exception as ex:
+        print('Unable to post data to eventlogger: {}'.format(ex))

@@ -77,8 +77,7 @@
 #define MP_BC_END_FINALLY        (0x41)
 #define MP_BC_GET_ITER           (0x42)
 #define MP_BC_FOR_ITER           (0x43) // rel byte code offset, 16-bit unsigned
-#define MP_BC_POP_BLOCK          (0x44)
-#define MP_BC_POP_EXCEPT         (0x45)
+#define MP_BC_POP_EXCEPT_JUMP    (0x44) // rel byte code offset, 16-bit unsigned
 #define MP_BC_UNWIND_JUMP        (0x46) // rel byte code offset, 16-bit signed, in excess; then a byte
 #define MP_BC_GET_ITER_STACK     (0x47)
 
@@ -99,8 +98,8 @@
 
 #define MP_BC_MAKE_FUNCTION         (0x60) // uint
 #define MP_BC_MAKE_FUNCTION_DEFARGS (0x61) // uint
-#define MP_BC_MAKE_CLOSURE          (0x62) // uint
-#define MP_BC_MAKE_CLOSURE_DEFARGS  (0x63) // uint
+#define MP_BC_MAKE_CLOSURE          (0x62) // uint; byte
+#define MP_BC_MAKE_CLOSURE_DEFARGS  (0x63) // uint; byte
 #define MP_BC_CALL_FUNCTION         (0x64) // uint
 #define MP_BC_CALL_FUNCTION_VAR_KW  (0x65) // uint
 #define MP_BC_CALL_METHOD           (0x66) // uint
