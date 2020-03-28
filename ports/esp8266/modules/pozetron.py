@@ -38,6 +38,7 @@ one_day = const(24*60*60*1000)
 
 
 
+
 def epilog():
     # We're trying to be cooperative here.
     utime.sleep_ms(0)
@@ -541,6 +542,7 @@ class ScriptStore:
         for id in ids:
             try:
                 filename, hash = self._cache[id]
+                self._cache.pop(id)
                 self._changed = True
             except KeyError:
                 continue
@@ -562,6 +564,12 @@ class ScriptStore:
 # Get log mode on reboot
 def get_log_mode():
     import logger
+    try:
+        logger._send_logs = LOG_SEND
+        logger.file_size = LOG_FILE_SIZE
+    except NameError:
+        logger._send_logs = False
+        logger.file_size = 1024
     try:
         data = request(API_BASE + '/log-mode/').json()
         logger._send_logs = data['enable']
@@ -620,9 +628,35 @@ def datapoint(data):
         print('Unable to post data to datalogger: {}'.format(ex))
 
 
+# This is a convinient callable that takes any arguments and always returns True
+always_true = lambda *a, **k: True
+
+
+# This is the list of subscribers for the Events system
+subscribers = set()
+
+
+def subscribe(topic,filter,action):
+    subscriber = Subscriber(topic,filter,action)
+    global subscribers
+    subscribers.add(subscriber)
+
+
+def unsubscribe(topic,filter,action):
+    subscriber = Subscriber(topic,filter,action)
+    global subscribers
+    subscribers.remove(subscriber)
+
+
 #  Write whatever is passed in as data to the eventlogger
 def event(data):
     try:
+        for subscriber in pozetron.subscribers:
+            if (subscriber.topic == '*' or subscriber.topic == data.get('topic', None)) and subscriber.filter(data):
+                subscriber.action(data)
+    except Exception as ex:
+        log(exc_logline.format('run subscribers', ex))
+    try:
         request(API_BASE + '/events/', method='POST', json=data)
     except Exception as ex:
-        print('Unable to post data to eventlogger: {}'.format(ex))
+        log(exc_logline.format('send event', ex))
