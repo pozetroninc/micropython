@@ -3,18 +3,20 @@
  */
 
 #define MICROPY_HW_BOARD_NAME       "NUCLEO-L073RZ"
-#define MICROPY_HW_MCU_NAME         "STM32F073RZT6"
+#define MICROPY_HW_MCU_NAME         "STM32L073RZT6"
 
 #define MICROPY_EMIT_THUMB          (0)
 #define MICROPY_EMIT_INLINE_THUMB   (0)
 #define MICROPY_PY_BUILTINS_COMPLEX (0)
+#define MICROPY_PY_GENERATOR_PEND_THROW (0)
 #define MICROPY_PY_MATH             (0)
 #define MICROPY_PY_FRAMEBUF         (0)
 #define MICROPY_PY_USOCKET          (0)
 #define MICROPY_PY_NETWORK          (0)
 #define MICROPY_PY_STM              (0)
 #define MICROPY_PY_PYB_LEGACY       (0)
-#define MICROPY_VFS_FAT             (0)
+#define MICROPY_PY_UHEAPQ           (0)
+#define MICROPY_PY_UTIMEQ           (0)
 
 #define MICROPY_HW_ENABLE_INTERNAL_FLASH_STORAGE (0)
 #define MICROPY_HW_ENABLE_RTC       (1)
