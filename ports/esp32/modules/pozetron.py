@@ -628,9 +628,11 @@ def datapoint(data):
         print('Unable to post data to datalogger: {}'.format(ex))
 
 
-# This is a convinient callable that takes any arguments and always returns True
+# This is a convenient callable that takes any arguments and always returns True
 always_true = lambda *a, **k: True
 
+from ucollections import namedtuple
+Subscriber = namedtuple('Subscriber', ('topic','filter','action'))
 
 # This is the list of subscribers for the Events system
 subscribers = set()
