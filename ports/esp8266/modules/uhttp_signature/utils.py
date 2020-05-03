@@ -5,7 +5,7 @@ except ImportError:
     import re
 import ustruct
 #import uhashlib as hashlib
-import base64
+#import base64
 #import six
 import gc
 
@@ -217,5 +217,3 @@ def build_signature_template(key_id, algorithm, headers):
     #key = base64.b64decode(key)
     #fp_plain = hashlib.md5(key).hexdigest()
     #return ':'.join(a+b for a,b in zip(fp_plain[::2], fp_plain[1::2]))
-
-

@@ -1,4 +1,4 @@
-import base64
+from ubinascii import  b2a_base64
 #import six
 
 #from cryptography.hazmat.backends import default_backend
@@ -98,7 +98,7 @@ class Signer(object):
             gc.collect()
             raise ValueError('No valid encryptor found.')
         gc.collect()
-        return base64.b64encode(signed).decode("ascii")
+        return b2a_base64(signed)[:-1].decode("ascii")
 
 
 class HeaderSigner(Signer):
